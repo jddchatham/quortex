@@ -1,10 +1,44 @@
 {
-  "schema": 1,
-  "state": "NEXT_ASSIGNMENT",
   "assignment": "Deterministic persistent multi-turn session harness",
+  "autonomous_runner": "available as bounded codex exec, not continuously active",
+  "large_model_status": "not accepted",
   "last_commit": "aa0dd8145ce4a2cec71d2de6510b8e8fc9139c1d",
+  "last_supervisor_cycle": 1,
+  "last_supervisor_log": "quortex/autonomy/logs/cycle-001-retry-0-20261022-190531.jsonl",
+  "last_supervisor_returncode": 0,
   "last_verified": "2026-10-22",
   "next": "Implement persistent session harness; reject mismatched semantics",
-  "large_model_status": "not accepted",
-  "autonomous_runner": "available as bounded codex exec, not continuously active"
+  "schema": 1,
+  "state": "NEXT_ASSIGNMENT",
+  "supervisor_history": [
+    {
+      "cycle": 1,
+      "dry_run": true,
+      "log": "quortex/autonomy/logs/cycle-001-retry-0-20261022-190516.jsonl",
+      "returncode": 0,
+      "time": "2026-10-23T01:05:16Z"
+    },
+    {
+      "cycle": 2,
+      "dry_run": true,
+      "log": "quortex/autonomy/logs/cycle-002-retry-0-20261022-190516.jsonl",
+      "returncode": 0,
+      "time": "2026-10-23T01:05:16Z"
+    },
+    {
+      "cycle": 1,
+      "dry_run": false,
+      "log": "quortex/autonomy/logs/cycle-001-retry-0-20261022-190519.jsonl",
+      "returncode": 2,
+      "time": "2026-10-23T01:05:19Z"
+    },
+    {
+      "cycle": 1,
+      "dry_run": false,
+      "log": "quortex/autonomy/logs/cycle-001-retry-0-20261022-190531.jsonl",
+      "returncode": 0,
+      "time": "2026-10-23T01:06:48Z"
+    }
+  ],
+  "supervisor_status": "cycle-succeeded"
 }

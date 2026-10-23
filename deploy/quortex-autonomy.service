@@ -1,0 +1,21 @@
+[Unit]
+Description=QUORTEX bounded autonomous QIES development supervisor
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/user/quortex
+ExecStart=/usr/bin/python3 -m quortex.autonomy.supervisor --cycles=1 --max-runtime=900 --max-retries=2 --memory-mb=2048
+Environment=PYTHONPATH=/home/user/quortex
+MemoryMax=2G
+CPUQuota=200%
+TasksMax=64
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=30s
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
+

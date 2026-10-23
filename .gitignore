@@ -13,3 +13,8 @@ dist/
 __pycache__/
 .env
 
+# Runtime supervisor state (source state.json is tracked; transient evidence is not)
+quortex/autonomy/events.jsonl
+quortex/autonomy/logs/
+quortex/autonomy/supervisor.lock
+quortex/autonomy/stop.requested

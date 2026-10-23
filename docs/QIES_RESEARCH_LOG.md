@@ -15,5 +15,7 @@
 - Assumption: backend state can be kept alive and transcript boundaries are stable.
 - Risk: wrapper may alter chat templates or duplicate history.
 - Experiment: compare a two-turn persistent session against two fresh direct invocations using tokenized transcripts and outputs.
-- Status: next experiment; not accepted.
+- Status: harness implemented; real backend probe rejected because the available
+  Cortex-era interactive mode exits with `input is empty` under the bounded PTY
+  protocol. No inference-path benefit measured.
 

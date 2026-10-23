@@ -2,5 +2,4 @@
 
 The installed environment provides `/home/user/.local/bin/codex` with a supported noninteractive `codex exec` command. This session is not itself an indefinitely running agent. A bounded supervisor may invoke one cycle at a time, subject to authentication, approvals, quotas, and host limits.
 
-No unattended cycle is started automatically by this repository. The optional workflow must use a lock, a wall-time limit, a single assignment, and explicit test/commit/push policy. A queue file is durable state, not proof of continuous execution.
-
+The bounded supervisor is implemented at `quortex/autonomy/supervisor.py` and a user-service unit is provided at `deploy/quortex-autonomy.service`. Two dry-run cycles passed, and one real Codex cycle completed; the child could not commit because its managed environment reported `.git` read-only. The controlling session must commit verified changes before enabling the service. A queue file is durable state, not proof of continuous execution.
