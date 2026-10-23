@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "state": "AUDIT",
+  "assignment": "Deterministic direct-versus-Quortex two-turn transcript harness",
+  "last_commit": "db9862e9fdb5cb679033682129c4a31c45261874",
+  "last_verified": "2026-10-22",
+  "next": "Implement transcript harness; reject mismatched semantics",
+  "large_model_status": "not accepted",
+  "autonomous_runner": "available as bounded codex exec, not continuously active"
+}
