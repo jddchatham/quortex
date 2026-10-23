@@ -7,6 +7,6 @@ from .quadrant import (
     Officiator,
     Quadrant,
 )
+from .inference import LaunchPlan, make_plan
 
-__all__ = ["Candidate", "Context", "Decision", "Officiator", "Quadrant"]
-
+__all__ = ["Candidate", "Context", "Decision", "LaunchPlan", "Officiator", "Quadrant", "make_plan"]
