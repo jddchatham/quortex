@@ -10,7 +10,7 @@ Environment=PYTHONPATH=/home/user/quortex
 MemoryMax=2G
 CPUQuota=200%
 TasksMax=64
-Restart=on-failure
+Restart=always
 RestartSec=30s
 TimeoutStopSec=30s
 NoNewPrivileges=yes
@@ -18,4 +18,3 @@ PrivateTmp=yes
 
 [Install]
 WantedBy=default.target
-
