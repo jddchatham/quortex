@@ -16,6 +16,7 @@ def main(argv=None) -> int:
     parser.add_argument("--require", action="append", default=[], help="context requirement; repeatable")
     parser.add_argument("--property", action="append", dest="properties", default=["model", "runtime", "chat"], help="candidate property; repeatable")
     parser.add_argument("--json-decision", action="store_true", help="print the officiation decision and exit")
+    parser.add_argument("--single-turn", action="store_true", help="use deterministic non-conversation backend mode")
     args, extra = parser.parse_known_args(argv)
 
     if not Path(args.model).is_file():
@@ -26,7 +27,7 @@ def main(argv=None) -> int:
         return 2
 
     plan, candidate, context, decision = make_plan(
-        args.backend, args.model, args.require, args.properties, args.prompt
+        args.backend, args.model, args.require, args.properties, args.prompt, not args.single_turn
     )
     record = {
         "candidate": candidate.key,

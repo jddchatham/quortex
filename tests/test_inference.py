@@ -49,6 +49,13 @@ class InferenceGateTests(unittest.TestCase):
             self.assertEqual(context.requirements, frozenset({"model", "runtime"}))
             self.assertEqual(candidate.quadrant.bits, (1, 1))
 
+    def test_single_turn_plan_disables_conversation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model.gguf"
+            model.write_bytes(b"test placeholder")
+            plan, _, _, _ = make_plan("/bin/true", str(model), conversation=False)
+            self.assertFalse(plan.conversation)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,7 +6,7 @@ Current test command:
 python3 -m unittest discover -s tests -v
 ```
 
-Current result: 9 tests passed on 2026-10-22.
+Current result: 13 tests passed on 2026-10-22.
 
 Verified:
 
@@ -20,5 +20,6 @@ Verified:
 - accepted plan construction;
 - `--json-decision` does not launch a side-effecting backend.
 
-Not yet verified: wrapper/direct token equivalence, multi-turn semantic equivalence, large-model full generation, or inference-path speedup.
+Not yet verified: multi-turn semantic equivalence, large-model full generation, or inference-path speedup.
 
+Single-turn oracle comparison passed: `benchmarks/compare_direct_wrapper.py` returned identical stdout and SHA-256 hashes for direct and QUORTEX execution with fixed seed `123`.

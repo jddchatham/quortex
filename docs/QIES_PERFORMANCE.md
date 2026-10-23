@@ -8,3 +8,4 @@ See `QUORTEX_RUNTIME_BASELINE.md`. One bounded run measured 8.822 s wall time fo
 
 The gate avoids backend work only when the context rejects the candidate. This is not an accepted-inference acceleration result. No 100× claim exists.
 
+The deterministic single-turn comparison measured 4.012 s direct versus 4.108 s through the QUORTEX launcher. This is a one-run wrapper-overhead observation, not a statistically established regression or improvement.

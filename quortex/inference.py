@@ -16,6 +16,7 @@ class LaunchPlan:
     prompt: Optional[str]
     requirements: frozenset[str]
     properties: frozenset[str]
+    conversation: bool = True
 
 
 def make_plan(
@@ -24,6 +25,7 @@ def make_plan(
     requirements: Iterable[str] = (),
     properties: Iterable[str] = ("model", "runtime", "chat"),
     prompt: Optional[str] = None,
+    conversation: bool = True,
 ) -> tuple[LaunchPlan, Candidate, Context, Decision]:
     exe = Path(executable)
     model_path = Path(model)
@@ -35,7 +37,7 @@ def make_plan(
     )
     context = Context.from_requirements(requirements)
     decision = Officiator().officiate(candidate, context)
-    return LaunchPlan(exe, model_path, prompt, context.requirements, candidate.properties), candidate, context, decision
+    return LaunchPlan(exe, model_path, prompt, context.requirements, candidate.properties, conversation), candidate, context, decision
 
 
 def run_chat(plan: LaunchPlan, extra_args: Iterable[str] = ()) -> int:
@@ -43,11 +45,11 @@ def run_chat(plan: LaunchPlan, extra_args: Iterable[str] = ()) -> int:
     command = [
         str(plan.executable),
         "-m", str(plan.model),
-        "-cnv",
-        "--simple-io",
         "-t", "2",
         "-ngl", "0",
     ]
+    if plan.conversation:
+        command.extend(["-cnv", "--simple-io"])
     if plan.prompt is not None:
         command.extend(["-p", plan.prompt])
     command.extend(extra_args)
@@ -56,4 +58,3 @@ def run_chat(plan: LaunchPlan, extra_args: Iterable[str] = ()) -> int:
 
 def executable_available(executable: str) -> bool:
     return Path(executable).is_file() or shutil.which(executable) is not None
-

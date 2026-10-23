@@ -8,3 +8,8 @@ Evidence: remote `origin/quortex` and local `quortex` both point to `db9862e9fdb
 
 Next assignment: create a reproducible transcript harness and compare output/token behavior with the trusted backend.
 
+## 2026-10-22 — Stage A single-turn accepted
+
+The fixed-seed direct-versus-QUORTEX single-turn harness produced identical stdout and SHA-256 output hashes. Direct wall time was 4.012 s and wrapper wall time was 4.108 s. This passes correctness for the single-turn scope and proves no optimization. Interactive multi-turn behavior remains rejected pending a persistent-session harness.
+
+Next assignment: establish deterministic persistent multi-turn session semantics and test whether state reuse avoids repeated prompt/model setup work.
