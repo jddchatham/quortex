@@ -17,3 +17,7 @@ not begin full generation without an explicit acceptance experiment.
 M3-EXEC-01 partial result: a real-weight external Cortex layer-1-to-layer-2
 chain passed activation and state handoff. Continue by exposing a bounded
 layer-0 producer and an independent reference before accepting the assignment.
+
+The bounded retry reached external graph setup but aborted on
+`GGML_ASSERT(tensor->buffer == NULL)` (return code 134). Obtain or rebuild a
+compatible executable, or expose a local execution seam, before retrying.

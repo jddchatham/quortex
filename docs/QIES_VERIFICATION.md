@@ -42,3 +42,8 @@ layer 2 in one process. It reported `CHAIN_EXECUTION_PASS=YES`,
 finite layer-2 output, and zero unselected-expert reads. The required
 layer-0-to-layer-1 producer path and independent numerical reference remain
 unverified.
+
+Retry evidence: the real layer-0 chain was bounded to 90 seconds and
+terminated with return code 134 on `GGML_ASSERT(tensor->buffer == NULL)` during
+graph setup. No layer-0 or layer-1 result was emitted. Repository tests pass
+56/56; M3-EXEC-01 remains unaccepted.

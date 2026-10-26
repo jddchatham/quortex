@@ -41,3 +41,10 @@ the activation handoff was byte-exact, both state commits passed, output was
 finite, and unselected-expert reads were zero. This is partial evidence only:
 the probe starts at layer 1, so the required layer-0 producer feeding layer 1
 remains open.
+
+## 2026-10-26 — M3-EXEC-01 bounded retry
+
+The available external executable was invoked with the real layer-0 chain and
+a 90-second bound. It aborted during graph setup with
+`GGML_ASSERT(tensor->buffer == NULL)` before emitting a layer-0 or layer-1
+pass. No QUORTEX execution-plane source was changed; acceptance remains open.
