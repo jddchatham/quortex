@@ -95,7 +95,7 @@ over documentation. Inspect before editing. Preserve Cortex and do not add model
 weights, checkpoints, credentials, or generated binaries. Use small bounded tests.
 Do not claim success without executable evidence. If the assignment cannot be
 completed safely, document the blocker and leave the tree recoverable.
-Run relevant tests, update the QIES logs/state and backlog assignment status, and commit and push only verified
+Run relevant tests, update only concise QIES records and backlog assignment status (never append repeated cycle transcripts to markdown or state), and commit and push only verified
 source/docs changes to origin/quortex; never force-push. Do not start large-model
 runs unless the assignment explicitly justifies them.
 """
@@ -145,6 +145,7 @@ def record_cycle(state: dict, cycle: int, code: int, log: Path, config: Config) 
         "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "dry_run": config.dry_run,
     })
+    del history[:-20]
     state["last_supervisor_cycle"] = cycle
     state["last_supervisor_returncode"] = code
     state["last_supervisor_log"] = str(log.relative_to(ROOT))
