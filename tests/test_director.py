@@ -1,0 +1,32 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from quortex.autonomy.director import begin, complete, eligible, fail, load, save, select
+
+
+class DirectorTests(unittest.TestCase):
+    def data(self):
+        return {"assignments":[
+            {"id":"A","objective":"first","dependencies":[],"priority":1,"status":"pending","attempts":0,"evidence":[],"source_commit":None,"next_action":"do"},
+            {"id":"B","objective":"second","dependencies":["A"],"priority":2,"status":"pending","attempts":0,"evidence":[],"source_commit":None,"next_action":"wait"},
+            {"id":"C","objective":"independent","dependencies":[],"priority":3,"status":"pending","attempts":0,"evidence":[],"source_commit":None,"next_action":"do"}
+        ]}
+
+    def test_completion_advances(self):
+        data=self.data(); self.assertEqual(select(data)["id"],"A"); begin(data,"A"); complete(data,"A","tests", "abc"); self.assertEqual(select(data)["id"],"B")
+
+    def test_failed_task_blocks_after_bound(self):
+        data=self.data()
+        for _ in range(3):
+            begin(data,"A"); fail(data,"A","failure")
+        self.assertEqual(data["assignments"][0]["status"],"blocked")
+        self.assertEqual(select(data)["id"],"C")
+
+    def test_empty_backlog_is_idle(self):
+        data={"assignments":[]}; self.assertIsNone(select(data)); self.assertEqual(eligible(data),[])
+
+    def test_atomic_round_trip(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/"backlog.json"; save(p,self.data()); self.assertEqual(load(p)["assignments"][0]["id"],"A")
+

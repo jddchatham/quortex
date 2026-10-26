@@ -1,0 +1,11 @@
+{
+  "schema": 2,
+  "assignments": [
+    {"id":"M1", "objective":"Complete deterministic persistent multi-turn GGUF conversation", "dependencies":[], "acceptance":["same process handles two turns", "direct oracle agrees"], "verify":["python3 -m unittest discover -s tests -v"], "priority":1, "status":"in_progress", "attempts":0, "evidence":[], "source_commit":null, "next_action":"Resolve backend input-empty behavior"},
+    {"id":"M2", "objective":"Integrate contextual convergence into actual inference execution", "dependencies":["M1"], "acceptance":["real execution path changes", "correctness comparison passes"], "verify":["python3 -m unittest discover -s tests -v"], "priority":2, "status":"pending", "attempts":0, "evidence":[], "source_commit":null, "next_action":"Design a pre-segment reuse experiment"},
+    {"id":"M3", "objective":"Execute the large FlashNext GGUF through Cortex streaming", "dependencies":["M2"], "acceptance":["multi-token generation", "logits validated", "bounded residency measured"], "verify":["documented large-model regression"], "priority":3, "status":"pending", "attempts":0, "evidence":[], "source_commit":null, "next_action":"Validate model assets and metadata"},
+    {"id":"M4", "objective":"Optimize large-model CPU, memory, storage, routing, and scheduling", "dependencies":["M3"], "acceptance":["profiled bottleneck", "reproducible improvement"], "verify":["raw benchmark comparison"], "priority":4, "status":"pending", "attempts":0, "evidence":[], "source_commit":null, "next_action":"Profile only after M3"},
+    {"id":"M5", "objective":"Test contextual convergence for safe computation elimination or reuse", "dependencies":["M2"], "acceptance":["hypothesis tested on real inference", "correctness boundaries recorded"], "verify":["oracle comparison"], "priority":5, "status":"pending", "attempts":0, "evidence":[], "source_commit":null, "next_action":"Run bounded exactness experiment"},
+    {"id":"M6", "objective":"Establish reproducible acceleration against frozen baselines", "dependencies":["M3","M4","M5"], "acceptance":["cold/warm benchmarks", "RAM/I/O/correctness evidence"], "verify":["published benchmark ledger"], "priority":6, "status":"pending", "attempts":0, "evidence":[], "source_commit":null, "next_action":"Compare accepted optimizations"}
+  ]
+}

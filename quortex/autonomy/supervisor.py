@@ -31,6 +31,7 @@ LOG_DIR = AUTONOMY / "logs"
 LOCK_PATH = AUTONOMY / "supervisor.lock"
 EVENTS_PATH = AUTONOMY / "events.jsonl"
 STOP_PATH = AUTONOMY / "stop.requested"
+BACKLOG_PATH = AUTONOMY / "backlog.json"
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,9 @@ def stop_requested() -> bool:
 
 
 def prompt_for(state: dict) -> str:
-    assignment = state.get("assignment", "No assignment recorded")
+    assignment = state.get("assignment")
+    if not assignment:
+        raise ValueError("no Director assignment selected")
     return f"""You are executing one bounded QIES-001 engineering cycle for QUORTEX.
 
 Read QUORTEX.md, QUORTEX_GENESIS.md, all docs/QIES_*.md, and the current Git state.
@@ -85,14 +88,14 @@ You are one coordinated team of six personas: Director, Research Scientist,
 Implementation Engineer, Verification Officer, Performance Engineer, and
 Continuity Engineer. Apply separation of duties internally and report evidence.
 
-Current durable assignment: {assignment}
+Current durable assignment: {assignment} (id: {state.get("director_assignment_id", "unknown")})
 
 Do exactly one bounded assignment cycle. Prioritize working inference engineering
 over documentation. Inspect before editing. Preserve Cortex and do not add model
 weights, checkpoints, credentials, or generated binaries. Use small bounded tests.
 Do not claim success without executable evidence. If the assignment cannot be
 completed safely, document the blocker and leave the tree recoverable.
-Run relevant tests, update the QIES logs/state, and commit and push only verified
+Run relevant tests, update the QIES logs/state and backlog assignment status, and commit and push only verified
 source/docs changes to origin/quortex; never force-push. Do not start large-model
 runs unless the assignment explicitly justifies them.
 """
@@ -162,6 +165,25 @@ def run(config: Config) -> int:
                 if stop_requested():
                     event({"kind": "supervisor-stop-requested", "cycle": cycle})
                     return 0
+                # Director selection happens at every bounded cycle. Completed
+                # work is never silently reissued; no eligible work is idle.
+                from .director import begin, load as load_backlog, save as save_backlog, select
+                backlog = load_backlog(BACKLOG_PATH)
+                selected = select(backlog)
+                if selected is None:
+                    state["state"] = "IDLE"
+                    state["assignment"] = None
+                    state["director_assignment_id"] = None
+                    state["supervisor_status"] = "idle-no-eligible-work"
+                    save_state(state)
+                    event({"kind": "director-idle", "cycle": cycle})
+                    return 0
+                begin(backlog, selected["id"])
+                save_backlog(BACKLOG_PATH, backlog)
+                state["state"] = "IMPLEMENT"
+                state["assignment"] = selected["objective"]
+                state["director_assignment_id"] = selected["id"]
+                save_state(state)
                 success = False
                 for retry in range(config.max_retries + 1):
                     code, log = run_codex(state, config, cycle, retry)
@@ -174,6 +196,10 @@ def run(config: Config) -> int:
                         event({"kind": "retry-backoff", "seconds": delay, "cycle": cycle, "retry": retry})
                         time.sleep(delay)
                 if not success:
+                    from .director import fail as fail_assignment, load as load_backlog, save as save_backlog
+                    backlog = load_backlog(BACKLOG_PATH)
+                    fail_assignment(backlog, selected["id"], f"supervisor return code {code}")
+                    save_backlog(BACKLOG_PATH, backlog)
                     state["supervisor_status"] = "paused-unrecoverable-failure"
                     save_state(state)
                     event({"kind": "supervisor-paused", "cycle": cycle})
