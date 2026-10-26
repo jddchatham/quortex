@@ -5,7 +5,7 @@
         "minimal failing case explained",
         "corrective test or documented external blocker"
       ],
-      "attempts": 1,
+      "attempts": 2,
       "dependencies": [],
       "evidence": [
         "diagnosed missing --interactive-first input boundary",
@@ -17,7 +17,7 @@
       "id": "M1-DIAG",
       "next_action": "Compare direct and persistent transcripts with a bounded-compatible fixture",
       "objective": "Diagnose and repair the backend persistent-session input protocol",
-      "priority": 1.5,
+      "priority": 2,
       "source_commit": null,
       "status": "retry_pending",
       "verify": [
@@ -35,7 +35,7 @@
       "id": "M3-PREP",
       "next_action": "Inspect existing model shards and Cortex descriptors",
       "objective": "Prepare bounded FlashNext metadata and Cortex integration evidence without full generation",
-      "priority": 2.5,
+      "priority": 1,
       "source_commit": null,
       "status": "pending",
       "verify": [
