@@ -152,6 +152,52 @@ def record_cycle(state: dict, cycle: int, code: int, log: Path, config: Config) 
     save_state(state)
 
 
+def rotate_logs(keep: int = 40, max_bytes: int = 100 * 1024 * 1024) -> None:
+    files = sorted(LOG_DIR.glob("cycle-*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    total = 0
+    for index, path in enumerate(files):
+        size = path.stat().st_size
+        if index >= keep or total + size > max_bytes:
+            path.unlink(missing_ok=True)
+            companion = path.with_suffix(".last.txt")
+            companion.unlink(missing_ok=True)
+        else:
+            total += size
+
+
+def publish_verified_changes() -> tuple[bool, str]:
+    """Publish only after the child and the repository test suite succeed.
+
+    The Codex workspace sandbox may deny `.git` writes. Publication therefore
+    belongs to this service process, which still uses ordinary Git commands and
+    never force-pushes.
+    """
+    tests = subprocess.run(["python3", "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=180, check=False)
+    if tests.returncode != 0:
+        event({"kind": "publish-tests-failed", "returncode": tests.returncode, "output": tests.stdout[-4000:]})
+        return False, "tests-failed"
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, stdout=subprocess.PIPE, text=True, check=False)
+    if status.returncode != 0:
+        return False, "git-status-failed"
+    if not status.stdout.strip():
+        return True, "clean"
+    add = subprocess.run(["git", "add", "-A"], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
+    if add.returncode != 0:
+        return False, "git-add-failed"
+    commit = subprocess.run(["git", "commit", "-m", "Autonomous verified QIES milestone"], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
+    if commit.returncode != 0:
+        return False, "git-commit-failed"
+    push = subprocess.run(["git", "push", "origin", "quortex"], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
+    if push.returncode != 0:
+        return False, "git-push-failed"
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    remote = subprocess.check_output(["git", "ls-remote", "--heads", "origin", "quortex"], cwd=ROOT, text=True).strip()
+    if not remote.startswith(head + "\t"):
+        return False, "remote-sha-mismatch"
+    event({"kind": "published", "commit": head, "tests": "passed"})
+    return True, head
+
+
 def run(config: Config) -> int:
     if config.max_cycles < 1:
         raise ValueError("--cycles must be positive")
@@ -204,6 +250,16 @@ def run(config: Config) -> int:
                     save_state(state)
                     event({"kind": "supervisor-paused", "cycle": cycle})
                     return 1
+                published, publication = publish_verified_changes()
+                event({"kind": "publication-result", "cycle": cycle, "success": published, "result": publication})
+                if not published:
+                    state["supervisor_status"] = "paused-publication-failure"
+                    save_state(state)
+                    return 1
+                if publication != "clean":
+                    state["last_commit"] = publication
+                    save_state(state)
+                rotate_logs()
                 state = load_state()
             event({"kind": "supervisor-complete", "cycles": config.max_cycles})
             return 0
