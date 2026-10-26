@@ -26,7 +26,9 @@ def select(data: dict) -> dict | None:
     choices = eligible(data)
     if not choices:
         return None
-    return sorted(choices, key=lambda a: (a["status"] not in {"in_progress", "retry_pending"}, a["priority"]))[0]
+    # Priority dominates retry state: a recoverable retry cannot starve an
+    # independent higher-priority assignment. Attempts remain in the record.
+    return sorted(choices, key=lambda a: (a["priority"], a["status"] != "in_progress"))[0]
 
 
 def begin(data: dict, assignment_id: str) -> dict:

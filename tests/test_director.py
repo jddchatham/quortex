@@ -32,6 +32,11 @@ class DirectorTests(unittest.TestCase):
     def test_empty_backlog_is_idle(self):
         data={"assignments":[]}; self.assertIsNone(select(data)); self.assertEqual(eligible(data),[])
 
+    def test_high_priority_independent_work_preempts_retry(self):
+        data=self.data(); begin(data,"A"); fail(data,"A","recoverable",max_attempts=3)
+        data["assignments"][2]["priority"] = 0
+        self.assertEqual(select(data)["id"],"C")
+
     def test_atomic_round_trip(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/"backlog.json"; save(p,self.data()); self.assertEqual(load(p)["assignments"][0]["id"],"A")
