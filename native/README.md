@@ -23,4 +23,14 @@ This exercises one normal context-owned allocation. It intentionally does not
 call the allocator twice on the same tensor; the fatal assertion is therefore
 not reproduced by this safe regression until a matching graph lifecycle is
 available.
+
+Real-weight operation:
+
+```sh
+cmake --build native/build --target quortex-flashnext-op -j2
+native/build/quortex-flashnext-op /path/to/model.gguf
+```
+
+This is a bounded, real-weight GGML matrix-vector operation. It is a runtime
+foundation milestone, not evidence of a complete FlashNext layer.
 ```

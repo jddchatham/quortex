@@ -24,3 +24,9 @@ target_include_directories(quortex-tensor-allocation PRIVATE
   "${CORTEX_GGML_SOURCE}/include")
 target_link_libraries(quortex-tensor-allocation PRIVATE ggml ggml-base ggml-cpu)
 target_compile_features(quortex-tensor-allocation PRIVATE cxx_std_17)
+
+add_executable(quortex-flashnext-op flashnext_op.cpp)
+target_include_directories(quortex-flashnext-op PRIVATE
+  "${CORTEX_GGML_SOURCE}/include")
+target_link_libraries(quortex-flashnext-op PRIVATE ggml ggml-base ggml-cpu)
+target_compile_features(quortex-flashnext-op PRIVATE cxx_std_17)
