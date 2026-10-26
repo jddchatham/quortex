@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quortex.autonomy.director import begin, complete, eligible, fail, load, save, select
+from quortex.autonomy.director import acceptance_met, begin, complete, eligible, fail, load, save, select
 
 
 class DirectorTests(unittest.TestCase):
@@ -22,6 +22,12 @@ class DirectorTests(unittest.TestCase):
             begin(data,"A"); fail(data,"A","failure")
         self.assertEqual(data["assignments"][0]["status"],"blocked")
         self.assertEqual(select(data)["id"],"C")
+
+    def test_zero_exit_without_acceptance_cannot_complete(self):
+        data=self.data(); begin(data,"A"); self.assertFalse(acceptance_met(data["assignments"][0])); fail(data,"A","codex exited zero but acceptance unmet",max_attempts=1); self.assertEqual(data["assignments"][0]["status"],"blocked")
+
+    def test_retry_pending_is_bounded_and_blocked_is_not_eligible(self):
+        data=self.data(); begin(data,"A"); fail(data,"A","recoverable",max_attempts=3); self.assertEqual(data["assignments"][0]["status"],"retry_pending"); begin(data,"A"); fail(data,"A","recoverable",max_attempts=3); begin(data,"A"); fail(data,"A","terminal",max_attempts=3); self.assertEqual(data["assignments"][0]["status"],"blocked"); self.assertEqual(select(data)["id"],"C")
 
     def test_empty_backlog_is_idle(self):
         data={"assignments":[]}; self.assertIsNone(select(data)); self.assertEqual(eligible(data),[])

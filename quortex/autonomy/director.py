@@ -19,19 +19,21 @@ def save(path: Path, data: dict) -> None:
 
 def eligible(data: dict) -> list[dict]:
     done = {a["id"] for a in data["assignments"] if a["status"] == "completed"}
-    return [a for a in data["assignments"] if a["status"] in {"pending", "in_progress"} and set(a["dependencies"]).issubset(done)]
+    return [a for a in data["assignments"] if a["status"] in {"pending", "retry_pending", "in_progress"} and set(a["dependencies"]).issubset(done)]
 
 
 def select(data: dict) -> dict | None:
     choices = eligible(data)
     if not choices:
         return None
-    return sorted(choices, key=lambda a: (a["status"] != "in_progress", a["priority"]))[0]
+    return sorted(choices, key=lambda a: (a["status"] not in {"in_progress", "retry_pending"}, a["priority"]))[0]
 
 
 def begin(data: dict, assignment_id: str) -> dict:
     for assignment in data["assignments"]:
         if assignment["id"] == assignment_id:
+            if assignment["status"] == "blocked":
+                raise ValueError("blocked assignment requires explicit reset or new evidence")
             assignment["status"] = "in_progress"
             assignment["attempts"] += 1
             return assignment
@@ -55,6 +57,13 @@ def fail(data: dict, assignment_id: str, reason: str, max_attempts: int = 3) -> 
             if assignment["attempts"] >= max_attempts:
                 assignment["status"] = "blocked"
                 assignment["next_action"] = "Diagnose blocker or obtain required authorization"
+            else:
+                assignment["status"] = "retry_pending"
             return assignment
     raise KeyError(assignment_id)
+
+
+def acceptance_met(assignment: dict) -> bool:
+    """Independent acceptance marker; Codex exit status is not acceptance."""
+    return assignment.get("acceptance_verified") is True
 

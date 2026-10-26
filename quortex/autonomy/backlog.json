@@ -1,11 +1,13 @@
 {
   "assignments": [
+    {"id":"M1-DIAG", "objective":"Diagnose and repair the backend persistent-session input protocol", "dependencies":[], "acceptance":["minimal failing case explained", "corrective test or documented external blocker"], "verify":["python3 -m unittest discover -s tests -v"], "priority":1.5, "status":"pending", "attempts":0, "evidence":[], "source_commit":null, "next_action":"Inspect PTY/readiness/chat-template protocol"},
+    {"id":"M3-PREP", "objective":"Prepare bounded FlashNext metadata and Cortex integration evidence without full generation", "dependencies":[], "acceptance":["model assets fingerprinted", "streaming entry points mapped"], "verify":["metadata and source inspection commands"], "priority":2.5, "status":"pending", "attempts":0, "evidence":[], "source_commit":null, "next_action":"Inspect existing model shards and Cortex descriptors"},
     {
       "acceptance": [
         "same process handles two turns",
         "direct oracle agrees"
       ],
-      "attempts": 4,
+      "attempts": 5,
       "dependencies": [],
       "evidence": [
         "focused persistent-session tests 35/35",

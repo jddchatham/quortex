@@ -251,6 +251,17 @@ def run(config: Config) -> int:
                     save_state(state)
                     event({"kind": "supervisor-paused", "cycle": cycle})
                     return 1
+                from .director import acceptance_met, complete as complete_assignment, fail as fail_assignment, load as load_backlog, save as save_backlog
+                backlog = load_backlog(BACKLOG_PATH)
+                current = next(a for a in backlog["assignments"] if a["id"] == selected["id"])
+                if acceptance_met(current):
+                    complete_assignment(backlog, selected["id"], "acceptance marker and supervisor test suite passed")
+                    save_backlog(BACKLOG_PATH, backlog)
+                    event({"kind": "assignment-accepted", "assignment": selected["id"]})
+                else:
+                    fail_assignment(backlog, selected["id"], "codex exited zero but independent acceptance criteria remain unmet")
+                    save_backlog(BACKLOG_PATH, backlog)
+                    event({"kind": "assignment-acceptance-unmet", "assignment": selected["id"], "status": current["status"], "attempts": current["attempts"]})
                 published, publication = publish_verified_changes()
                 event({"kind": "publication-result", "cycle": cycle, "success": published, "result": publication})
                 if not published:
