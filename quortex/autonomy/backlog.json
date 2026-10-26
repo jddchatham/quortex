@@ -29,9 +29,13 @@
         "model assets fingerprinted",
         "streaming entry points mapped"
       ],
-      "attempts": 1,
+      "attempts": 2,
       "dependencies": [],
       "evidence": [
+        "three target GGUF shards present, totaling 97473155200 bytes",
+        "existing Cortex SHA-256 ledger records all target shards and auxiliaries",
+        "Cortex frozen commit 8da466d mapped to layer buffers, tensor offsets, and bounded pread",
+        "QIES large-model record updated; no weights or binaries copied",
         "codex exited zero but independent acceptance criteria remain unmet"
       ],
       "id": "M3-PREP",

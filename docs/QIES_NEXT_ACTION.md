@@ -8,3 +8,8 @@ After acceptance, investigate persistent prompt/state reuse as the first actual 
 
 The harness now uses `--interactive-first`; a bounded direct-versus-persistent
 completion run remains required before M1 can be accepted.
+
+M3-PREP is complete for this cycle: target shard fingerprints and the Cortex
+provider/`pread` entry points are recorded in `docs/QIES_LARGE_MODEL_STATUS.md`.
+Next M3 work must use the recorded external artifacts and remain bounded; do
+not begin full generation without an explicit acceptance experiment.
