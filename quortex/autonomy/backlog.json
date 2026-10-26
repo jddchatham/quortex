@@ -29,21 +29,22 @@
         "model assets fingerprinted",
         "streaming entry points mapped"
       ],
-      "attempts": 2,
+      "attempts": 3,
       "dependencies": [],
       "evidence": [
         "three target GGUF shards present, totaling 97473155200 bytes",
         "existing Cortex SHA-256 ledger records all target shards and auxiliaries",
         "Cortex frozen commit 8da466d mapped to layer buffers, tensor offsets, and bounded pread",
         "QIES large-model record updated; no weights or binaries copied",
+        "codex exited zero but independent acceptance criteria remain unmet",
         "codex exited zero but independent acceptance criteria remain unmet"
       ],
       "id": "M3-PREP",
-      "next_action": "Inspect existing model shards and Cortex descriptors",
+      "next_action": "Diagnose blocker or obtain required authorization",
       "objective": "Prepare bounded FlashNext metadata and Cortex integration evidence without full generation",
       "priority": 1,
       "source_commit": null,
-      "status": "retry_pending",
+      "status": "blocked",
       "verify": [
         "metadata and source inspection commands"
       ]
