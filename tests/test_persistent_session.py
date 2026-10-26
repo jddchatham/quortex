@@ -101,6 +101,7 @@ class PersistentSessionTests(unittest.TestCase):
         command = build_command("llama-cli", "model.gguf", "test system")
         self.assertEqual(command[-2:], ["-p", "test system"])
         self.assertIn("-cnv", command)
+        self.assertIn("--interactive-first", command)
 
     def test_record_preserves_session_control_configuration(self):
         record = run_session(

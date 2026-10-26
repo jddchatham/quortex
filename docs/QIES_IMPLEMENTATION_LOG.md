@@ -25,3 +25,10 @@ state-reuse claim is accepted.
 The backend loaded the local Qwen2.5 GGUF and the PTY harness sent both turns,
 but bounded CPU probes did not finish prompt evaluation/generation. The record
 was incomplete and no implementation change was made.
+
+## 2026-10-26 — M1-DIAG repair
+
+Diagnosis: `-cnv` lacked `--interactive-first`, so the first input boundary
+depended on the backend's initial generation path. The harness now explicitly
+waits for the first user turn, with a regression assertion. Focused tests pass
+35/35; model-backed transcript equivalence remains unverified.

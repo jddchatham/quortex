@@ -285,7 +285,7 @@ def run_session(command, turns, timeout, ready_marker=None, exit_command=None,
 
 def build_command(backend, model, system_prompt):
     return [backend, "-m", model, "-t", "2", "-ngl", "0",
-            "-cnv", "--simple-io", "-n", "8", "--seed", "123",
+            "-cnv", "--interactive-first", "--simple-io", "-n", "8", "--seed", "123",
             "--no-warmup", "--no-display-prompt", "-p", system_prompt]
 
 

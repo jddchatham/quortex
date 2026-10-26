@@ -19,3 +19,9 @@
   Cortex-era interactive mode exits with `input is empty` under the bounded PTY
   protocol. No inference-path benefit measured.
 
+## 2026-10-26 — M1-DIAG result
+
+The minimal protocol fault was the unspecified initial input boundary: `-cnv`
+was used without `--interactive-first`. The harness now requests input-first
+behavior. This repairs command semantics but does not establish transcript
+equivalence or an optimization.

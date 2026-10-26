@@ -30,3 +30,7 @@ an early backend exit is reported as incomplete. A real bounded probe using the
 Qwen2.5 model and `/home/user/bitnet-cortex/phase8-build/bin/llama-cli` sent
 both turns and loaded the GGUF, but bounded CPU probes did not complete prompt
 evaluation/generation; multi-turn equivalence remains open.
+
+M1-DIAG verification: focused persistent-session tests pass 35/35 and the full
+suite passes 55/55 after adding `--interactive-first`; `llama-cli --help`
+confirms the option is supported. No model-backed comparison was claimed.
