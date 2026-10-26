@@ -33,4 +33,13 @@ native/build/quortex-flashnext-op /path/to/model.gguf
 
 This is a bounded, real-weight GGML matrix-vector operation. It is a runtime
 foundation milestone, not evidence of a complete FlashNext layer.
+
+Optional Cortex llama adapter:
+
+```sh
+cmake -S native -B native/build \
+  -DCORTEX_GGML_SOURCE=/home/user/bitnet-cortex/cortex-stream-forge/runtime-flashnext-stock-oracle-exp/runtime-src/ggml \
+  -DCORTEX_LLAMA_BUILD=/home/user/bitnet-cortex/cortex-stream-forge/runtime-flashnext-layer-exp-build
+cmake --build native/build --target quortex-flashnext-layer0 -j2
+```
 ```
