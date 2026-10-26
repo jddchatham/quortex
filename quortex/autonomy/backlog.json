@@ -20,7 +20,7 @@
       "objective": "Complete deterministic persistent multi-turn GGUF conversation",
       "priority": 1,
       "source_commit": null,
-      "status": "in_progress",
+      "status": "blocked",
       "verify": [
         "python3 -m unittest discover -s tests -v"
       ]
