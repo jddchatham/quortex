@@ -18,3 +18,9 @@ target_include_directories(quortex-gguf-diagnostic PRIVATE
   "${CORTEX_GGML_SOURCE}/include")
 target_link_libraries(quortex-gguf-diagnostic PRIVATE ggml-base)
 target_compile_features(quortex-gguf-diagnostic PRIVATE cxx_std_17)
+
+add_executable(quortex-tensor-allocation tensor_allocation.cpp)
+target_include_directories(quortex-tensor-allocation PRIVATE
+  "${CORTEX_GGML_SOURCE}/include")
+target_link_libraries(quortex-tensor-allocation PRIVATE ggml ggml-base ggml-cpu)
+target_compile_features(quortex-tensor-allocation PRIVATE cxx_std_17)

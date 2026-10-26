@@ -12,4 +12,15 @@ cmake -S native -B native/build \
   -DGGML_CPU=ON -DBUILD_SHARED_LIBS=OFF
 cmake --build native/build --target quortex-gguf-diagnostic -j2
 native/build/quortex-gguf-diagnostic /path/to/model.gguf
+
+Allocation regression:
+
+```sh
+native/build/quortex-tensor-allocation
+```
+
+This exercises one normal context-owned allocation. It intentionally does not
+call the allocator twice on the same tensor; the fatal assertion is therefore
+not reproduced by this safe regression until a matching graph lifecycle is
+available.
 ```
