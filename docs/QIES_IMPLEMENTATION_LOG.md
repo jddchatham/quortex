@@ -47,4 +47,6 @@ remains open.
 The available external executable was invoked with the real layer-0 chain and
 a 90-second bound. It aborted during graph setup with
 `GGML_ASSERT(tensor->buffer == NULL)` before emitting a layer-0 or layer-1
-pass. No QUORTEX execution-plane source was changed; acceptance remains open.
+pass. A bounded inspection found no compatible alternate executable and no
+QUORTEX execution-plane seam; the dirty Cortex checkout was preserved. No
+source integration was safe.

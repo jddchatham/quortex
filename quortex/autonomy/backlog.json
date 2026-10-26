@@ -7,7 +7,7 @@
         "layer 1 completes with real GGUF weights",
         "trusted numerical reference or explicit reference limitation is recorded"
       ],
-      "attempts": 2,
+      "attempts": 3,
       "dependencies": [],
       "evidence": [
         "bounded external Cortex probe loaded the real 90.77 GiB GGUF through pread with mmap disabled",
@@ -15,14 +15,15 @@
         "acceptance unmet: no verified layer-0 producer to layer-1 consumer path; QUORTEX has no local execution plane",
         "bounded layer-0 chain retry aborted in external graph setup with GGML_ASSERT(tensor->buffer == NULL), return code 134",
         "repository tests pass 56/56; acceptance remains unmet",
+        "codex exited zero but independent acceptance criteria remain unmet",
         "codex exited zero but independent acceptance criteria remain unmet"
       ],
       "id": "M3-EXEC-01",
-      "next_action": "Obtain or rebuild a compatible external executable, or expose a local execution seam, then rerun the real-weight layer-0 to layer-1 chain with an independent numerical reference",
+      "next_action": "Diagnose blocker or obtain required authorization",
       "objective": "Integrate and verify real-weight FlashNext layer 0 to layer 1 execution with state propagation",
       "priority": 1,
       "source_commit": null,
-      "status": "retry_pending",
+      "status": "blocked",
       "verify": [
         "bounded real-weight two-layer execution command",
         "python3 -m unittest discover -s tests -v"

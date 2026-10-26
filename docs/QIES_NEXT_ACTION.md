@@ -19,5 +19,7 @@ chain passed activation and state handoff. Continue by exposing a bounded
 layer-0 producer and an independent reference before accepting the assignment.
 
 The bounded retry reached external graph setup but aborted on
-`GGML_ASSERT(tensor->buffer == NULL)` (return code 134). Obtain or rebuild a
-compatible executable, or expose a local execution seam, before retrying.
+`GGML_ASSERT(tensor->buffer == NULL)` (return code 134). The available Cortex
+checkout is dirty and no compatible alternate or local QUORTEX execution seam
+was found in this cycle. Obtain or rebuild a compatible executable, or
+explicitly authorize exposing a local seam, before retrying.
