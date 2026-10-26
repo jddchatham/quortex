@@ -32,3 +32,12 @@ Diagnosis: `-cnv` lacked `--interactive-first`, so the first input boundary
 depended on the backend's initial generation path. The harness now explicitly
 waits for the first user turn, with a regression assertion. Focused tests pass
 35/35; model-backed transcript equivalence remains unverified.
+
+## 2026-10-26 — M3-EXEC-01 bounded probe
+
+The external Cortex owned-layer executable completed a real-weight layer-1 to
+layer-2 transaction chain in one process using the three-shard FlashNext GGUF:
+the activation handoff was byte-exact, both state commits passed, output was
+finite, and unselected-expert reads were zero. This is partial evidence only:
+the probe starts at layer 1, so the required layer-0 producer feeding layer 1
+remains open.

@@ -2,6 +2,32 @@
   "assignments": [
     {
       "acceptance": [
+        "one process completes Segment-A, dynamic routing, selected experts, and Segment-B for layer 0",
+        "layer 0 hidden output and required recurrent/attention state feed layer 1",
+        "layer 1 completes with real GGUF weights",
+        "trusted numerical reference or explicit reference limitation is recorded"
+      ],
+      "attempts": 1,
+      "dependencies": [],
+      "evidence": [
+        "bounded external Cortex probe loaded the real 90.77 GiB GGUF through pread with mmap disabled",
+        "one-process layer-1 to layer-2 chain passed exact activation handoff, both state commits, finite output, and zero unselected-expert reads",
+        "acceptance unmet: no verified layer-0 producer to layer-1 consumer path; QUORTEX has no local execution plane",
+        "codex exited zero but independent acceptance criteria remain unmet"
+      ],
+      "id": "M3-EXEC-01",
+      "next_action": "Add or expose a bounded layer-0 producer, then rerun the real-weight layer-0 to layer-1 chain with an independent numerical reference",
+      "objective": "Integrate and verify real-weight FlashNext layer 0 to layer 1 execution with state propagation",
+      "priority": 1,
+      "source_commit": null,
+      "status": "retry_pending",
+      "verify": [
+        "bounded real-weight two-layer execution command",
+        "python3 -m unittest discover -s tests -v"
+      ]
+    },
+    {
+      "acceptance": [
         "minimal failing case explained",
         "corrective test or documented external blocker"
       ],

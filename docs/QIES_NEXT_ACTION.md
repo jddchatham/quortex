@@ -13,3 +13,7 @@ M3-PREP is complete for this cycle: target shard fingerprints and the Cortex
 provider/`pread` entry points are recorded in `docs/QIES_LARGE_MODEL_STATUS.md`.
 Next M3 work must use the recorded external artifacts and remain bounded; do
 not begin full generation without an explicit acceptance experiment.
+
+M3-EXEC-01 partial result: a real-weight external Cortex layer-1-to-layer-2
+chain passed activation and state handoff. Continue by exposing a bounded
+layer-0 producer and an independent reference before accepting the assignment.

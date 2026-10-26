@@ -34,3 +34,11 @@ evaluation/generation; multi-turn equivalence remains open.
 M1-DIAG verification: focused persistent-session tests pass 35/35 and the full
 suite passes 55/55 after adding `--interactive-first`; `llama-cli --help`
 confirms the option is supported. No model-backed comparison was claimed.
+
+M3-EXEC-01 bounded external probe: the prebuilt Cortex owned-layer command
+loaded the real FlashNext shards with mmap disabled and completed layer 1 then
+layer 2 in one process. It reported `CHAIN_EXECUTION_PASS=YES`,
+`ACTIVATION_CONTRACT_PASS=YES`, `HANDOFF_BYTE_EXACT=YES`, both state commits,
+finite layer-2 output, and zero unselected-expert reads. The required
+layer-0-to-layer-1 producer path and independent numerical reference remain
+unverified.
