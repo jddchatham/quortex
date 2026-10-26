@@ -5,21 +5,22 @@
         "minimal failing case explained",
         "corrective test or documented external blocker"
       ],
-      "attempts": 3,
+      "attempts": 4,
       "dependencies": [],
       "evidence": [
         "diagnosed missing --interactive-first input boundary",
         "focused persistent-session tests 35/35",
         "full repository tests 55/55",
         "llama-cli help confirms option",
+        "codex exited zero but independent acceptance criteria remain unmet",
         "codex exited zero but independent acceptance criteria remain unmet"
       ],
       "id": "M1-DIAG",
-      "next_action": "Compare direct and persistent transcripts with a bounded-compatible fixture",
+      "next_action": "Diagnose blocker or obtain required authorization",
       "objective": "Diagnose and repair the backend persistent-session input protocol",
       "priority": 2,
       "source_commit": null,
-      "status": "in_progress",
+      "status": "blocked",
       "verify": [
         "python3 -m unittest discover -s tests -v"
       ]

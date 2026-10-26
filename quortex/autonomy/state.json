@@ -1,11 +1,11 @@
 {
-  "assignment": "Prepare bounded FlashNext metadata and Cortex integration evidence without full generation",
+  "assignment": "Diagnose and repair the backend persistent-session input protocol",
   "autonomous_runner": "available as bounded codex exec, not continuously active",
-  "director_assignment_id": "M3-PREP",
+  "director_assignment_id": "M1-DIAG",
   "large_model_status": "not accepted",
-  "last_commit": "1620ce36319c1e85a2d4fa73f39d7df07b23e107",
+  "last_commit": "dba3fe5679208b381ab11d7da0cfbd00acdbdd14",
   "last_supervisor_cycle": 1,
-  "last_supervisor_log": "quortex/autonomy/logs/cycle-001-retry-0-20261026-094631.jsonl",
+  "last_supervisor_log": "quortex/autonomy/logs/cycle-001-retry-0-20261026-094721.jsonl",
   "last_supervisor_returncode": 0,
   "last_verified": "2026-10-22",
   "next": "Implement persistent session harness; reject mismatched semantics",
@@ -81,6 +81,13 @@
       "log": "quortex/autonomy/logs/cycle-001-retry-0-20261026-094631.jsonl",
       "returncode": 0,
       "time": "2026-10-26T15:46:43Z"
+    },
+    {
+      "cycle": 1,
+      "dry_run": false,
+      "log": "quortex/autonomy/logs/cycle-001-retry-0-20261026-094721.jsonl",
+      "returncode": 0,
+      "time": "2026-10-26T15:48:16Z"
     }
   ],
   "supervisor_status": "cycle-succeeded"
