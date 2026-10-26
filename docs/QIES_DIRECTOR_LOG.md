@@ -20,3 +20,10 @@ The bounded harness and protocol tests are reproducible, but the available
 Cortex-era backend exits with `input is empty` after both PTY writes (return
 code 255). Reject the multi-turn milestone and any optimization claim. Continue
 from the recoverable harness with a backend interaction diagnosis.
+
+## 2026-10-26 — M1 bounded retry remains open
+
+The local Cortex-era `llama-cli` loaded the available 1.79 GiB Qwen2.5 GGUF and
+accepted both PTY turns, but bounded 5–45 second probes did not complete prompt
+evaluation/generation. The harness recorded incomplete sessions; no transcript
+equivalence or state-reuse claim is accepted. No source change was justified.

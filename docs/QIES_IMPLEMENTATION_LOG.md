@@ -20,3 +20,8 @@ turns, but exited with code 255 and `input is empty` before producing a reply.
 This is a backend interaction blocker; no persistent transcript equivalence or
 state-reuse claim is accepted.
 
+## 2026-10-26 — M1 bounded retry
+
+The backend loaded the local Qwen2.5 GGUF and the PTY harness sent both turns,
+but bounded CPU probes did not finish prompt evaluation/generation. The record
+was incomplete and no implementation change was made.

@@ -5,16 +5,16 @@
         "same process handles two turns",
         "direct oracle agrees"
       ],
-      "attempts": 2,
+      "attempts": 4,
       "dependencies": [],
       "evidence": [
         "focused persistent-session tests 35/35",
         "repository tests 53/53",
         "compileall, durable JSON, diff hygiene, and protected-artifact checks passed",
-        "model-backed transcript equivalence remains unverified; Git publication blocked by read-only .git"
+        "model-backed transcript equivalence remains unverified; local Qwen2.5 GGUF loaded but bounded CPU probes did not finish generation"
       ],
       "id": "M1",
-      "next_action": "Obtain an approved compatible backend/model fixture, then run one bounded direct-versus-persistent comparison; publish when .git is writable",
+      "next_action": "Obtain a bounded-compatible backend/GGUF fixture or profiled configuration, then run one direct-versus-persistent comparison",
       "objective": "Complete deterministic persistent multi-turn GGUF conversation",
       "priority": 1,
       "source_commit": null,
