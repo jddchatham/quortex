@@ -17,6 +17,10 @@ checkpoints, with 287.2 MiB peak QUORTEX cgroup memory.
   external dependency inventory rather than mixing the checkout into QUORTEX.
 - Created local development branch `qies-059-position1`.
 - Added `docs/QIES_059_POSITION1_STATE_CONTRACT.md`.
+- Added opt-in `QUORTEX_TWO_TOKEN_STATE=1` mode. It evaluates two
+  embedding-backed tokens sequentially in one context, captures each output,
+  serializes sequence state after each position, and rejects conflicts with
+  the layer-0 diagnostic modes.
 - Added this report.
 
 ## Validation
@@ -24,6 +28,8 @@ checkpoints, with 287.2 MiB peak QUORTEX cgroup memory.
 The existing QUORTEX lightweight suite passed: `59 tests`.
 Python compile checks passed and `git diff --check` passed.
 No model execution was performed during this continuation session.
+The two-token mode has been built and statically checked, but its numerical
+continuation behavior remains unverified.
 
 ## Cortex dependency status
 
@@ -36,9 +42,10 @@ without separating the existing dirty work first.
 
 ## Position-1 status
 
-Position 1 is not implemented or verified. The state contract identifies whole
-sequence state, recurrent state, attention KV state, hyper-connection streams,
-sequence metadata, and exact serialization/restoration requirements.
+Position 1 is implemented as an opt-in sequential-context diagnostic mode but
+is not numerically verified. The state contract identifies whole sequence
+state, recurrent state, attention KV state, hyper-connection streams, sequence
+metadata, and exact serialization/restoration requirements.
 
 No position-1 execution was attempted, so there are no new runtime or memory
 measurements.

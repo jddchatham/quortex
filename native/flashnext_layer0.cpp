@@ -24,6 +24,17 @@ static bool write_capture(const char * dir, const char * name, const float * dat
     return std::rename(temp.c_str(), final.c_str()) == 0;
 }
 
+static bool write_bytes_capture(const char * dir, const char * name, const uint8_t * data, size_t n) {
+    if (!dir || !data || n == 0) return false;
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST) return false;
+    const std::string final = std::string(dir) + "/quortex_" + name + ".bin";
+    const std::string temp = final + ".tmp";
+    std::ofstream f(temp, std::ios::binary | std::ios::trunc);
+    if (!f.write(reinterpret_cast<const char *>(data), n)) return false;
+    f.close();
+    return std::rename(temp.c_str(), final.c_str()) == 0;
+}
+
 static uint64_t fnv_bytes(const uint8_t * p, size_t n) {
     uint64_t h = 1469598103934665603ull;
     for (size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; }
@@ -114,6 +125,44 @@ int main(int argc, char ** argv) {
     }
     llama_context * ctx = llama_init_from_model(model, cp);
     if (!ctx) { llama_model_free(model); llama_backend_free(); return 1; }
+    const bool two_token = std::getenv("QUORTEX_TWO_TOKEN_STATE") != nullptr;
+    if (two_token && (segment_b_dir || full_layer0)) {
+        std::puts("MODE_CONFLICT=TWO_TOKEN_STATE_AND_LAYER0_MODE");
+        llama_free(ctx); llama_model_free(model); llama_backend_free(); return 25;
+    }
+    if (two_token) {
+        const int32_t tokens[2] = {248045, 248046};
+        const char * dir = std::getenv("FLASHNEXT_COMPARE_DIR");
+        if (!dir) { std::puts("TWO_TOKEN_STATE=FAIL capture_directory_required"); llama_free(ctx); llama_model_free(model); llama_backend_free(); return 26; }
+        const int n_embd = llama_model_n_embd_inp(model);
+        const int n_out = llama_model_n_embd_out(model);
+        bool ok = n_embd > 0 && n_out > 0;
+        for (int pos = 0; pos < 2 && ok; ++pos) {
+            llama_batch b = llama_batch_init(1, n_embd, 1);
+            std::vector<float> row((size_t) n_embd);
+            ok = b.embd != nullptr && b.token == nullptr &&
+                llama_cortex_token_embd_rows(model, &tokens[pos], 1, row.data());
+            if (ok) {
+                std::copy(row.begin(), row.end(), b.embd);
+                b.pos[0] = pos; b.n_seq_id[0] = 1; b.seq_id[0][0] = 0; b.logits[0] = 1; b.n_tokens = 1;
+                ok = llama_decode(ctx, b) == 0;
+                llama_synchronize(ctx);
+            }
+            const float * output = ok ? llama_get_embeddings_ith(ctx, 0) : nullptr;
+            if (ok && output) {
+                for (int i = 0; i < n_out; ++i) ok = ok && std::isfinite(output[i]);
+                ok = ok && write_capture(dir, (std::string("two_token_pos") + std::to_string(pos) + "_output").c_str(), output, (size_t) n_out);
+            } else ok = false;
+            const size_t state_size = ok ? llama_state_seq_get_size(ctx, 0) : 0;
+            std::vector<uint8_t> state(state_size);
+            if (ok && (state_size == 0 || llama_state_seq_get_data(ctx, state.data(), state.size(), 0) != state_size)) ok = false;
+            if (ok) ok = write_bytes_capture(dir, (std::string("two_token_pos") + std::to_string(pos) + "_state").c_str(), state.data(), state.size());
+            std::printf("TWO_TOKEN_POSITION=%d TOKEN=%d STATUS=%s STATE_BYTES=%zu\n", pos, tokens[pos], ok ? "PASS" : "FAIL", state_size);
+            llama_batch_free(b);
+        }
+        llama_free(ctx); llama_model_free(model); llama_backend_free();
+        return ok ? 0 : 27;
+    }
     if (segment_b_dir) {
         std::vector<float> moe, residual, inject;
         if (!read_contract(segment_b_dir, moe, residual, inject)) {
