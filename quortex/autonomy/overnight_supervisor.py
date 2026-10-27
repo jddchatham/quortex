@@ -85,17 +85,18 @@ def load_state(start: datetime, deadline: datetime) -> dict:
             prior = {}
     else:
         prior = {}
+    fresh = prior.get("status") in {"COMPLETE", "BLOCKED", "DEADLINE", "STOPPED"} or prior.get("deadline_utc", "") <= start.isoformat()
     return {
         "schema": 1,
         "runner": "quortex-overnight",
         "start_utc": start.isoformat(),
         "deadline_utc": deadline.isoformat(),
         "status": "RUNNING",
-        "task_index": int(prior.get("task_index", 0)),
-        "cycles_completed": int(prior.get("cycles_completed", 0)),
-        "no_progress": int(prior.get("no_progress", 0)),
-        "two_token_gate": prior.get("two_token_gate"),
-        "two_token_gate_reasons": prior.get("two_token_gate_reasons", []),
+        "task_index": 0 if fresh else int(prior.get("task_index", 0)),
+        "cycles_completed": 0 if fresh else int(prior.get("cycles_completed", 0)),
+        "no_progress": 0 if fresh else int(prior.get("no_progress", 0)),
+        "two_token_gate": None if fresh else prior.get("two_token_gate"),
+        "two_token_gate_reasons": [] if fresh else prior.get("two_token_gate_reasons", []),
         "current_task": None,
         "worker_pid": None,
         "last_returncode": None,
