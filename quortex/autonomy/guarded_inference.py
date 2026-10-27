@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Allowlisted, resource-bounded launcher for approved FlashNext diagnostics."""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import resource
+import subprocess
+import sys
+import time
+
+ROOT = Path("/home/user/quortex").resolve()
+LOCK = ROOT / "quortex" / "autonomy" / "inference.lock"
+ALLOWED = {
+    "quortex": ROOT / "native" / "debug" / "quortex-flashnext-layer0",
+    "quortex-build": ROOT / "native" / "build" / "quortex-flashnext-layer0",
+    "reference": Path("/home/user/bitnet-cortex/cortex-stream-forge/bin/flashnext-cortex-stock-compare"),
+}
+MAX_AS = 1536 * 1024 * 1024
+TIMEOUT = 90
+ALLOWED_ENV = {
+    "CORTEX_EXTERNAL_GLOBAL_TENSORS", "CORTEX_FLASHNEXT_LAYER_START",
+    "CORTEX_FLASHNEXT_LAYER_END", "CORTEX_FLASHNEXT_LAYER_RANGE",
+    "CORTEX_FLASHNEXT_PRE_MOE", "CORTEX_FLASHNEXT_SEGMENT_B",
+    "CORTEX_FLASHNEXT_SEGMENT_B_INPUT_WIDTH", "CORTEX_FLASHNEXT_INTERNAL_TENSOR_DIAGNOSTICS",
+    "CORTEX_REFERENCE_TWO_TOKEN_ONLY", "QUORTEX_TWO_TOKEN_STATE",
+    "QUORTEX_FULL_LAYER0_STREAMED", "FLASHNEXT_TENSOR_INDEX", "FLASHNEXT_COMPARE_DIR",
+}
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]]:
+    exe = ALLOWED.get(args.target)
+    if exe is None or not exe.is_file() or not os.access(exe, os.X_OK):
+        raise ValueError(f"target is not an approved executable: {args.target}")
+    model = Path(args.model).resolve()
+    if not model.is_file() or not model.name.endswith(".gguf"):
+        raise ValueError("model must be an existing GGUF file")
+    out = Path(args.output).resolve()
+    if out == ROOT or ROOT not in out.parents:
+        raise ValueError("output must be below the QUORTEX repository")
+    out.mkdir(parents=True, exist_ok=True)
+    if any(out.iterdir()):
+        raise ValueError("output directory must be fresh and empty")
+    index = Path(args.index).resolve() if args.index else None
+    if index is not None and (not index.is_file() or index.suffix != ".json"):
+        raise ValueError("tensor index must be an existing JSON file")
+    env = {k: v for k, v in os.environ.items() if k in ALLOWED_ENV}
+    env.update({"FLASHNEXT_COMPARE_DIR": str(out)})
+    if index:
+        env["FLASHNEXT_TENSOR_INDEX"] = str(index)
+    if args.target.startswith("quortex"):
+        env.update({"QUORTEX_TWO_TOKEN_STATE": "1", "CORTEX_FLASHNEXT_LAYER_START": "0", "CORTEX_FLASHNEXT_LAYER_END": "1", "CORTEX_FLASHNEXT_LAYER_RANGE": "1"})
+    else:
+        env["CORTEX_REFERENCE_TWO_TOKEN_ONLY"] = "1"
+    return exe, model, out, env
+
+
+def set_limits() -> None:
+    resource.setrlimit(resource.RLIMIT_AS, (MAX_AS, MAX_AS))
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--target", choices=sorted(ALLOWED))
+    p.add_argument("--model", required=True)
+    p.add_argument("--output", required=True)
+    p.add_argument("--index")
+    p.add_argument("--evidence", required=True)
+    args = p.parse_args()
+    try:
+        exe, model, out, env = validate(args)
+    except ValueError as exc:
+        print(f"GUARD_REJECTED: {exc}", file=sys.stderr)
+        return 2
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with LOCK.open("a+") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("GUARD_REJECTED: another inference is running", file=sys.stderr)
+            return 3
+        start = time.monotonic()
+        command = [str(exe), str(model)]
+        evidence = {"target": args.target, "command": command, "model": str(model), "model_sha256": sha256(model), "output": str(out), "rlimit_as_bytes": MAX_AS, "timeout_seconds": TIMEOUT, "cgroup_required": {"MemoryMax": "2G", "MemorySwapMax": "0", "TasksMax": 64}, "environment": env}
+        # systemd-run is mandatory: RLIMIT_AS alone does not satisfy the physical-memory gate.
+        systemd = ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect", "-p", "MemoryMax=2G", "-p", "MemorySwapMax=0", "-p", "TasksMax=64", "--"] + command
+        try:
+            proc = subprocess.run(systemd, cwd=ROOT, env=env, preexec_fn=set_limits, timeout=TIMEOUT, text=True, capture_output=True)
+            evidence.update({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr, "wall_seconds": time.monotonic() - start})
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            evidence.update({"returncode": 124, "error": repr(exc), "wall_seconds": time.monotonic() - start})
+            proc = None
+        Path(args.evidence).resolve().parent.mkdir(parents=True, exist_ok=True)
+        Path(args.evidence).resolve().write_text(json.dumps(evidence, indent=2) + "\n")
+        return int(evidence["returncode"])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
