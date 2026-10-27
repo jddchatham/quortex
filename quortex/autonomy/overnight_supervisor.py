@@ -17,7 +17,11 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
-from quortex.autonomy.acceptance import two_token_pass
+try:
+    from quortex.autonomy.acceptance import two_token_pass
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from quortex.autonomy.acceptance import two_token_pass
 
 ROOT = Path("/home/user/quortex")
 AUTONOMY = ROOT / "quortex" / "autonomy"
