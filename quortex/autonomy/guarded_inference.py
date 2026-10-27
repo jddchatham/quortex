@@ -56,8 +56,13 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
     index = Path(args.index).resolve() if args.index else None
     if index is not None and (not index.is_file() or index.suffix != ".json"):
         raise ValueError("tensor index must be an existing JSON file")
+    if args.target == "reference" and index is None:
+        raise ValueError("reference requires a tensor index")
     env = {k: v for k, v in os.environ.items() if k in ALLOWED_ENV}
     env.update({"FLASHNEXT_COMPARE_DIR": str(out)})
+    if args.host_context:
+        # Fixed host user-manager endpoints; never accept these from a request.
+        env.update({"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"})
     if index:
         env["FLASHNEXT_TENSOR_INDEX"] = str(index)
     if args.target.startswith("quortex"):
@@ -78,6 +83,7 @@ def main() -> int:
     p.add_argument("--output", required=True)
     p.add_argument("--index")
     p.add_argument("--evidence", required=True)
+    p.add_argument("--host-context", action="store_true", help=argparse.SUPPRESS)
     args = p.parse_args()
     try:
         exe, model, out, env = validate(args)
@@ -93,9 +99,13 @@ def main() -> int:
             return 3
         start = time.monotonic()
         command = [str(exe), str(model)]
+        if args.target == "reference":
+            command.append(str(Path(args.index).resolve()))
         evidence = {"target": args.target, "command": command, "model": str(model), "model_sha256": sha256(model), "output": str(out), "rlimit_as_bytes": MAX_AS, "timeout_seconds": TIMEOUT, "cgroup_required": {"MemoryMax": "2G", "MemorySwapMax": "0", "TasksMax": 64}, "environment": env}
         # systemd-run is mandatory: RLIMIT_AS alone does not satisfy the physical-memory gate.
-        systemd = ["systemd-run", "--user", "--machine=user@.host", "--quiet", "--wait", "--pipe", "--collect", "-p", "MemoryMax=2G", "-p", "MemorySwapMax=0", "-p", "TasksMax=64", "--"] + command
+        systemd = ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect", "-p", "MemoryMax=2G", "-p", "MemorySwapMax=0", "-p", "TasksMax=64", "--"] + command
+        if not args.host_context:
+            systemd.insert(3, "--machine=user@.host")
         try:
             proc = subprocess.run(systemd, cwd=ROOT, env=env, preexec_fn=set_limits, timeout=TIMEOUT, text=True, capture_output=True)
             evidence.update({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr, "wall_seconds": time.monotonic() - start})
