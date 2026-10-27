@@ -21,6 +21,10 @@ checkpoints, with 287.2 MiB peak QUORTEX cgroup memory.
   embedding-backed tokens sequentially in one context, captures each output,
   serializes sequence state after each position, and rejects conflicts with
   the layer-0 diagnostic modes.
+- Added a matching Cortex-side `CORTEX_REFERENCE_TWO_TOKEN_ONLY=1` diagnostic
+  in the separate checkout. It uses the same context and token sequence and
+  captures position-1 output and both serialized states; the Cortex checkout
+  remains uncommitted because it contains unrelated dirty work.
 - Added this report.
 
 ## Validation
@@ -28,7 +32,7 @@ checkpoints, with 287.2 MiB peak QUORTEX cgroup memory.
 The existing QUORTEX lightweight suite passed: `59 tests`.
 Python compile checks passed and `git diff --check` passed.
 No model execution was performed during this continuation session.
-The two-token mode has been built and statically checked, but its numerical
+The two-token modes have been built and statically checked, but their numerical
 continuation behavior remains unverified.
 
 ## Cortex dependency status
@@ -42,8 +46,8 @@ without separating the existing dirty work first.
 
 ## Position-1 status
 
-Position 1 is implemented as an opt-in sequential-context diagnostic mode but
-is not numerically verified. The state contract identifies whole sequence
+Position 1 is implemented as matching opt-in sequential-context diagnostic
+modes but is not numerically verified. The state contract identifies whole sequence
 state, recurrent state, attention KV state, hyper-connection streams, sequence
 metadata, and exact serialization/restoration requirements.
 
