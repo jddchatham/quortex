@@ -15,8 +15,8 @@ class InferenceServiceValidationTests(unittest.TestCase):
         }
 
     def test_allowlisted_request_maps_to_fixed_target(self):
-        target, values = validate(self.base())
-        self.assertEqual(target, "reference")
+        request_id, values = validate(self.base())
+        self.assertEqual(request_id, "request-123456")
         self.assertEqual(values[0], "reference")
 
     def test_arbitrary_operation_rejected(self):
