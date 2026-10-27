@@ -44,8 +44,14 @@ if(CORTEX_LLAMA_BUILD AND EXISTS "${CORTEX_LLAMA_BUILD}/bin/libllama.so.0.5.0")
   add_library(cortex-ggml-cpu SHARED IMPORTED)
   set_target_properties(cortex-ggml-cpu PROPERTIES IMPORTED_LOCATION "${CORTEX_LLAMA_BUILD}/bin/libggml-cpu.so.0.25.3")
   add_executable(quortex-flashnext-layer0 flashnext_layer0.cpp)
+  target_sources(quortex-flashnext-layer0 PRIVATE
+    quortex_streamed_moe.cpp
+    "${CORTEX_LLAMA_BUILD}/../runtime-flashnext-layer-exp/src/flashnext-selected-moe.cpp"
+    "${CORTEX_LLAMA_BUILD}/../runtime-flashnext-layer-exp/src/flashnext-shared-expert.cpp"
+    "${CORTEX_LLAMA_BUILD}/../runtime-flashnext-layer-exp/src/flashnext-tensor-index.cpp")
   target_include_directories(quortex-flashnext-layer0 PRIVATE
     "${CORTEX_LLAMA_BUILD}/../runtime-flashnext-layer-exp/include"
+    "${CORTEX_LLAMA_BUILD}/../runtime-flashnext-layer-exp/src"
     "${CORTEX_GGML_SOURCE}/include")
   target_link_libraries(quortex-flashnext-layer0 PRIVATE cortex-llama cortex-common cortex-ggml cortex-ggml-cpu cortex-ggml-base dl pthread)
   target_compile_features(quortex-flashnext-layer0 PRIVATE cxx_std_17)
