@@ -95,7 +95,7 @@ def main() -> int:
         command = [str(exe), str(model)]
         evidence = {"target": args.target, "command": command, "model": str(model), "model_sha256": sha256(model), "output": str(out), "rlimit_as_bytes": MAX_AS, "timeout_seconds": TIMEOUT, "cgroup_required": {"MemoryMax": "2G", "MemorySwapMax": "0", "TasksMax": 64}, "environment": env}
         # systemd-run is mandatory: RLIMIT_AS alone does not satisfy the physical-memory gate.
-        systemd = ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect", "-p", "MemoryMax=2G", "-p", "MemorySwapMax=0", "-p", "TasksMax=64", "--"] + command
+        systemd = ["systemd-run", "--user", "--machine=user@.host", "--quiet", "--wait", "--pipe", "--collect", "-p", "MemoryMax=2G", "-p", "MemorySwapMax=0", "-p", "TasksMax=64", "--"] + command
         try:
             proc = subprocess.run(systemd, cwd=ROOT, env=env, preexec_fn=set_limits, timeout=TIMEOUT, text=True, capture_output=True)
             evidence.update({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr, "wall_seconds": time.monotonic() - start})

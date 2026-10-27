@@ -129,6 +129,22 @@ def stop_handler(signum, _frame):
     raise KeyboardInterrupt(f"signal {signum}")
 
 
+def ensure_host_inference_service(log: Path) -> bool:
+    """Start the allowlisted service in the host user manager, outside Codex."""
+    check = subprocess.run(["systemctl", "--user", "--machine=user@.host", "is-active", "--quiet", "quortex-inference-service.service"])
+    if check.returncode == 0:
+        append_log(log, "HOST_INFERENCE_SERVICE=already-active")
+        return True
+    command = [
+        "systemd-run", "--user", "--machine=user@.host", "--unit=quortex-inference-service.service",
+        "--collect", "--working-directory=/home/user/quortex", "--no-block", "--",
+        "/usr/bin/python3", str(AUTONOMY / "inference_service.py"),
+    ]
+    result = subprocess.run(command, text=True, capture_output=True)
+    append_log(log, f"HOST_INFERENCE_SERVICE_START rc={result.returncode} stdout={result.stdout.strip()} stderr={result.stderr.strip()}")
+    return result.returncode == 0
+
+
 def run(args: argparse.Namespace) -> int:
     AUTONOMY.mkdir(parents=True, exist_ok=True)
     start = now()
@@ -146,6 +162,11 @@ def run(args: argparse.Namespace) -> int:
         state["pid"] = os.getpid()
         atomic_write(STATE, state)
         append_log(log, f"START pid={os.getpid()} start={start.isoformat()} deadline={deadline.isoformat()}")
+        if not ensure_host_inference_service(log):
+            state["status"] = "BLOCKED"
+            state["blocker"] = "host inference service could not be started"
+            atomic_write(STATE, state)
+            return 1
         signal.signal(signal.SIGTERM, stop_handler)
         signal.signal(signal.SIGINT, stop_handler)
         try:
@@ -154,7 +175,7 @@ def run(args: argparse.Namespace) -> int:
                 state["current_task"] = task["id"]
                 state["worker_pid"] = None
                 atomic_write(STATE, state)
-                prompt = f"""You are the bounded QUORTEX overnight engineering worker.\nRepository: {ROOT}\nBranch must remain qies-059-position1 unless a local development branch is already required.\nRead QIES standards and current project state before acting.\nThis is sequential cycle {state['cycles_completed'] + 1}, task {task['id']}: {task['title']}.\n{task['prompt']}\nUse /home/user/quortex/quortex/autonomy/guarded_inference.py for any model execution; do not invoke inference binaries directly. For QIES-060, write the independently verifiable gate manifest to /home/user/quortex/quortex/autonomy/evidence/QIES-060-TWO-TOKEN.json with the required exit statuses, capture inventory, state_continuity boolean, and numerical_comparison value. At the end, run relevant tests and summarize exact results. Do not claim equivalence without evidence."""
+                prompt = f"""You are the bounded QUORTEX overnight engineering worker.\nRepository: {ROOT}\nBranch must remain qies-059-position1 unless a local development branch is already required.\nRead QIES standards and current project state before acting.\nThis is sequential cycle {state['cycles_completed'] + 1}, task {task['id']}: {task['title']}.\n{task['prompt']}\nSubmit model runs through /home/user/quortex/quortex/autonomy/request_client.py using its allowlisted operations; do not invoke systemd-run or inference binaries directly. For QIES-060, write the independently verifiable gate manifest to /home/user/quortex/quortex/autonomy/evidence/QIES-060-TWO-TOKEN.json with the required exit statuses, capture inventory, state_continuity boolean, and numerical_comparison value. At the end, run relevant tests and summarize exact results. Do not claim equivalence without evidence."""
                 cmd = [
                     "codex", "exec", "-C", str(ROOT), "--add-dir", "/home/user/bitnet-cortex",
                     "--approve-for-me", "--skip-git-repo-check", prompt,
