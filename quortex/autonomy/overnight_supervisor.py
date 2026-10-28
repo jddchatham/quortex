@@ -34,13 +34,18 @@ POLL_SECONDS = 5
 TASKS = [
     {
         "id": "QIES-060-TWO-TOKEN-COMPARE",
-        "title": "Run the first guarded two-token numerical comparison",
+        "title": "Repair or verify the first two-token comparison",
         "prompt": """Execute the first guarded Cortex/QUORTEX two-token numerical comparison using the existing diagnostic modes. Inspect the current QIES-060 implementation first. Do not push to GitHub, do not run competing processes, and do not retry an unchanged failed inference. Preserve MemoryMax=2G, MemorySwapMax=0, TasksMax=64, RLIMIT_AS=1536 MiB, and 90 seconds per inference process. If preflight is unsafe, stop model execution and record the exact blocker. Compare genuine position-0 and position-1 state/output captures, report evidence, and make only a narrowly justified source fix if static diagnosis proves one is needed. Run lightweight tests afterward.""",
     },
     {
-        "id": "QIES-060-DIAGNOSE-TWO-TOKEN",
-        "title": "Diagnose or repair the first two-token blocker",
-        "prompt": """Review the prior two-token comparison evidence. If it failed, diagnose the earliest concrete state, capture, or reference mismatch without repeating the same inference. Implement the smallest safe correction, preserving QIES-056 layer-0 correctness and all memory guards. If it passed, freeze the evidence and prepare the next sequence-length test. Do not push to GitHub or run inference without a new justified test case.""",
+        "id": "QIES-067-CRASH-REPAIR",
+        "title": "Repair the Cortex position-1 graph-input crash",
+        "prompt": """Read QIES-066 and QIES-067 evidence first. Treat the confirmed SIGSEGV in ggml_element_size -> llm_graph_input_embd::set_input during the Cortex position-1 decode as the active blocker. Inspect graph reconstruction, input tensor lifetime, and consecutive decode binding. Implement and statically test the smallest justified source correction. Do not submit another model request until the correction is built and supported by diagnostics. Preserve all safety limits and do not push to GitHub.""",
+    },
+    {
+        "id": "QIES-067-CRASH-VERIFY",
+        "title": "Verify the repaired Cortex reference path",
+        "prompt": """Review the QIES-067 repair and build evidence. Run focused non-model tests first. Submit at most one fresh guarded Cortex reference request only if the source correction is built and the prior crash mechanism is addressed. Preserve failed evidence, stop on a new crash, and record exact logs. Do not launch QUORTEX unless the trusted reference completes.""",
     },
     {
         "id": "QIES-061-LONGER-SEQUENCE",
@@ -248,12 +253,6 @@ def run(args: argparse.Namespace) -> int:
                     state["task_index"] = 2
                 else:
                     state["task_index"] += 1
-                if task["id"] == "QIES-060-DIAGNOSE-TWO-TOKEN" and state.get("two_token_gate") != "PASS":
-                    append_log(log, "STOP: diagnostic cycle completed without acceptance evidence")
-                    state["status"] = "BLOCKED"
-                    state["current_task"] = None
-                    atomic_write(STATE, state)
-                    return 1
                 state["current_task"] = None
                 atomic_write(STATE, state)
                 append_log(log, f"CYCLE_ACCEPTED task={task['id']} next_index={state['task_index']}")
