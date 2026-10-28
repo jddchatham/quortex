@@ -103,7 +103,14 @@ def main() -> int:
             command.append(str(Path(args.index).resolve()))
         evidence = {"target": args.target, "command": command, "model": str(model), "model_sha256": sha256(model), "output": str(out), "rlimit_as_bytes": MAX_AS, "timeout_seconds": TIMEOUT, "cgroup_required": {"MemoryMax": "2G", "MemorySwapMax": "0", "TasksMax": 64}, "environment": env}
         # systemd-run is mandatory: RLIMIT_AS alone does not satisfy the physical-memory gate.
-        systemd = ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect", "-p", "MemoryMax=2G", "-p", "MemorySwapMax=0", "-p", "TasksMax=64", "--"] + command
+        # systemd-run starts the unit from the user manager environment; the
+        # Python client's env is not inherited. Pass only the already-filtered
+        # diagnostic variables explicitly, so capture paths and mode flags
+        # cannot silently disappear at the privilege boundary.
+        systemd = ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect", "-p", "MemoryMax=2G", "-p", "MemorySwapMax=0", "-p", "TasksMax=64"]
+        for key, value in sorted(env.items()):
+            systemd += [f"--setenv={key}={value}"]
+        systemd += ["--"] + command
         if not args.host_context:
             systemd.insert(3, "--machine=user@.host")
         try:
