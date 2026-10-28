@@ -18,7 +18,7 @@ LOCK = ROOT / "quortex" / "autonomy" / "inference.lock"
 ALLOWED = {
     "quortex": ROOT / "native" / "debug" / "quortex-flashnext-layer0",
     "quortex-build": ROOT / "native" / "build" / "quortex-flashnext-layer0",
-    "reference": Path("/home/user/bitnet-cortex/cortex-stream-forge/bin/flashnext-cortex-stock-compare"),
+    "reference": Path("/home/user/bitnet-cortex/cortex-stream-forge/runtime-flashnext-layer-exp-build/bin/llama-flashnext-owned-layer"),
 }
 MAX_AS = 1536 * 1024 * 1024
 TIMEOUT = 90
