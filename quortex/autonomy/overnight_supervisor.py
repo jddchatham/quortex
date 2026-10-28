@@ -30,6 +30,7 @@ LOCK = AUTONOMY / "overnight.lock"
 SESSION = "quortex-overnight"
 WORKER_TIMEOUT = 55 * 60
 POLL_SECONDS = 5
+DEPENDENT_IDS = {"QIES-061-LONGER-SEQUENCE", "QIES-062-FULL-LAYER-TRAVERSAL", "QIES-063-PERSISTENT-PERFORMANCE"}
 
 TASKS = [
     {
@@ -106,6 +107,7 @@ def load_state(start: datetime, deadline: datetime) -> dict:
         "no_progress": 0 if fresh else int(prior.get("no_progress", 0)),
         "two_token_gate": None if fresh else prior.get("two_token_gate"),
         "two_token_gate_reasons": [] if fresh else prior.get("two_token_gate_reasons", []),
+        "dependency_routes": 0 if fresh else int(prior.get("dependency_routes", 0)),
         "current_task": None,
         "worker_pid": None,
         "last_returncode": None,
@@ -132,6 +134,12 @@ def append_log(log: Path, text: str) -> None:
 
 def stop_handler(signum, _frame):
     raise KeyboardInterrupt(f"signal {signum}")
+
+
+def dependency_route(state: dict, task_id: str) -> str:
+    if task_id not in DEPENDENT_IDS or state.get("two_token_gate") == "PASS":
+        return "allow"
+    return "route" if int(state.get("dependency_routes", 0)) < 2 else "stop"
 
 
 def ensure_host_inference_service(log: Path) -> bool:
@@ -177,6 +185,20 @@ def run(args: argparse.Namespace) -> int:
         try:
             while now() < deadline and state["task_index"] < len(TASKS):
                 task = TASKS[state["task_index"]]
+                route = dependency_route(state, task["id"])
+                if route == "route":
+                    state["dependency_routes"] += 1
+                    state["task_index"] = 1
+                    atomic_write(STATE, state)
+                    append_log(log, f"DEPENDENCY_ROUTE before_launch task={task['id']} -> QIES-067-CRASH-REPAIR route={state['dependency_routes']}")
+                    continue
+                if route == "stop":
+                    append_log(log, f"STOP: no new bounded crash-repair route remains; refused dependent task={task['id']}")
+                    state["status"] = "BLOCKED"
+                    state["blocker"] = "two-token acceptance remains blocked after bounded crash-repair routes"
+                    state["current_task"] = None
+                    atomic_write(STATE, state)
+                    return 1
                 state["current_task"] = task["id"]
                 state["worker_pid"] = None
                 atomic_write(STATE, state)
