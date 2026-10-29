@@ -28,7 +28,7 @@ ALLOWED_ENV = {
     "CORTEX_FLASHNEXT_LAYER_END", "CORTEX_FLASHNEXT_LAYER_RANGE",
     "CORTEX_FLASHNEXT_PRE_MOE", "CORTEX_FLASHNEXT_SEGMENT_B",
     "CORTEX_FLASHNEXT_SEGMENT_B_INPUT_WIDTH", "CORTEX_FLASHNEXT_INTERNAL_TENSOR_DIAGNOSTICS",
-    "CORTEX_REFERENCE_TWO_TOKEN_ONLY", "QUORTEX_TWO_TOKEN_STATE",
+    "CORTEX_REFERENCE_TWO_TOKEN_ONLY", "CORTEX_FLASHNEXT_CHAIN_1_2", "QUORTEX_TWO_TOKEN_STATE",
     "QUORTEX_FULL_LAYER0_STREAMED", "FLASHNEXT_TENSOR_INDEX", "FLASHNEXT_COMPARE_DIR",
     "QUORTEX_CHAIN_RANGE",
 }
@@ -70,7 +70,10 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
     if args.target.startswith("quortex") or args.target == "chain":
         env.update({"QUORTEX_TWO_TOKEN_STATE": "1", "CORTEX_FLASHNEXT_LAYER_START": "0", "CORTEX_FLASHNEXT_LAYER_END": "1", "CORTEX_FLASHNEXT_LAYER_RANGE": "1"})
     else:
-        env["CORTEX_REFERENCE_TWO_TOKEN_ONLY"] = "1"
+        if args.mode == "two-layer":
+            env["CORTEX_FLASHNEXT_CHAIN_1_2"] = "1"
+        else:
+            env["CORTEX_REFERENCE_TWO_TOKEN_ONLY"] = "1"
     return exe, model, out, env
 
 
@@ -86,6 +89,7 @@ def main() -> int:
     p.add_argument("--index")
     p.add_argument("--evidence", required=True)
     p.add_argument("--host-context", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--mode", choices=["two-token", "two-layer"], default="two-token", help=argparse.SUPPRESS)
     args = p.parse_args()
     try:
         exe, model, out, env = validate(args)
