@@ -106,7 +106,7 @@ def main() -> int:
         start = time.monotonic()
         command = [str(exe), str(model)]
         if args.target == "chain":
-            command.append(str(Path(args.index).resolve()))
+            command += [str(Path(args.index).resolve()), str(out)]
         if args.target == "reference":
             command.append(str(Path(args.index).resolve()))
         evidence = {"target": args.target, "command": command, "model": str(model), "model_sha256": sha256(model), "output": str(out), "rlimit_as_bytes": MAX_AS, "timeout_seconds": TIMEOUT, "cgroup_required": {"MemoryMax": "2G", "MemorySwapMax": "0", "TasksMax": 64}, "environment": env}
