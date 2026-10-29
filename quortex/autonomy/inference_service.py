@@ -11,7 +11,7 @@ except ImportError:
 
 BASE = ROOT / "quortex" / "autonomy" / "requests"
 INBOX, RESPONSES = BASE / "inbox", BASE / "responses"
-OPS = {"two_token_reference": "reference", "two_token_quortex": "quortex"}
+OPS = {"two_token_reference": "reference", "two_token_quortex": "quortex", "two_layer_quortex": "chain"}
 MAX_AGE = 120
 
 def atomic(path: Path, value: dict) -> None:
@@ -57,7 +57,7 @@ def main() -> int:
                     if response.exists(): raise ValueError("duplicate request id")
                     path.unlink()
                     target, model, output, index, evidence = vals
-                    cmd = [sys.executable, str(ROOT / "quortex/autonomy/guarded_inference.py"), "--target", target, "--model", model, "--output", output, "--evidence", evidence]
+                    cmd = [sys.executable, str(ROOT / "quortex/autonomy/guarded_inference.py"), "--host-context", "--target", target, "--model", model, "--output", output, "--evidence", evidence]
                     if index: cmd += ["--index", index]
                     proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
                     atomic(response, {"request_id": req_id, "status": "COMPLETED" if proc.returncode == 0 else "FAILED", "returncode": proc.returncode, "stdout": proc.stdout[-4000:], "stderr": proc.stderr[-4000:]})

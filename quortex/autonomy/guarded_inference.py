@@ -18,6 +18,7 @@ LOCK = ROOT / "quortex" / "autonomy" / "inference.lock"
 ALLOWED = {
     "quortex": ROOT / "native" / "debug" / "quortex-flashnext-layer0",
     "quortex-build": ROOT / "native" / "build" / "quortex-flashnext-layer0",
+    "chain": ROOT / "native" / "debug" / "quortex-flashnext-chain",
     "reference": Path("/home/user/bitnet-cortex/cortex-stream-forge/runtime-flashnext-layer-exp-build/bin/llama-flashnext-owned-layer"),
 }
 MAX_AS = 1536 * 1024 * 1024
@@ -29,6 +30,7 @@ ALLOWED_ENV = {
     "CORTEX_FLASHNEXT_SEGMENT_B_INPUT_WIDTH", "CORTEX_FLASHNEXT_INTERNAL_TENSOR_DIAGNOSTICS",
     "CORTEX_REFERENCE_TWO_TOKEN_ONLY", "QUORTEX_TWO_TOKEN_STATE",
     "QUORTEX_FULL_LAYER0_STREAMED", "FLASHNEXT_TENSOR_INDEX", "FLASHNEXT_COMPARE_DIR",
+    "QUORTEX_CHAIN_RANGE",
 }
 
 
@@ -56,8 +58,8 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
     index = Path(args.index).resolve() if args.index else None
     if index is not None and (not index.is_file() or index.suffix != ".json"):
         raise ValueError("tensor index must be an existing JSON file")
-    if args.target == "reference" and index is None:
-        raise ValueError("reference requires a tensor index")
+    if args.target in ("reference", "chain") and index is None:
+        raise ValueError("target requires a tensor index")
     env = {k: v for k, v in os.environ.items() if k in ALLOWED_ENV}
     env.update({"FLASHNEXT_COMPARE_DIR": str(out)})
     if args.host_context:
@@ -65,7 +67,7 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
         env.update({"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"})
     if index:
         env["FLASHNEXT_TENSOR_INDEX"] = str(index)
-    if args.target.startswith("quortex"):
+    if args.target.startswith("quortex") or args.target == "chain":
         env.update({"QUORTEX_TWO_TOKEN_STATE": "1", "CORTEX_FLASHNEXT_LAYER_START": "0", "CORTEX_FLASHNEXT_LAYER_END": "1", "CORTEX_FLASHNEXT_LAYER_RANGE": "1"})
     else:
         env["CORTEX_REFERENCE_TWO_TOKEN_ONLY"] = "1"
@@ -99,6 +101,8 @@ def main() -> int:
             return 3
         start = time.monotonic()
         command = [str(exe), str(model)]
+        if args.target == "chain":
+            command.append(str(Path(args.index).resolve()))
         if args.target == "reference":
             command.append(str(Path(args.index).resolve()))
         evidence = {"target": args.target, "command": command, "model": str(model), "model_sha256": sha256(model), "output": str(out), "rlimit_as_bytes": MAX_AS, "timeout_seconds": TIMEOUT, "cgroup_required": {"MemoryMax": "2G", "MemorySwapMax": "0", "TasksMax": 64}, "environment": env}
