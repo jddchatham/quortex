@@ -26,11 +26,11 @@ APPROVED_SHA256 = {
     "two-range": "41ad54216564564e17610a6bee5de14e4a4fe04f23d97f8db2a526575d250c75",
 }
 APPROVED_LIBRARY_SHA256 = {
-    "two-range": "db0faf50da598104eefac3c0137fec498066df0b099b962644fcb465ee636003",
+    "two-range": "f5f72adbb22bfdfb86c82b64942a6bcb47716e5383d2d266b49acfad4e7fc649",
 }
 APPROVED_DEPENDENCY_SHA256 = {
     "two-range": {
-        "libggml-base.so.0.25.3": "b437d8bff6502550785e5d78d8c944e1a76be4d55300db7fbbc7cae323e1dc70",
+        "libggml-base.so.0.25.3": "426046f381f53747aa42c46686fcebafb3b3d3f7a2993545a56f171259ba9db2",
     },
 }
 MAX_AS = 1536 * 1024 * 1024
