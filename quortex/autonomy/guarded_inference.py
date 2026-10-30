@@ -14,6 +14,7 @@ import sys
 import time
 
 ROOT = Path("/home/user/quortex").resolve()
+STAGED_TENSOR_INDEX = Path("/home/user/bitnet-cortex/cortex-stream-forge/flashnext-tensor-index.json")
 LOCK = ROOT / "quortex" / "autonomy" / "inference.lock"
 ALLOWED = {
     "quortex": ROOT / "native" / "debug" / "quortex-flashnext-layer0",
@@ -58,6 +59,25 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: f.read(1024 * 1024), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def validate_staged_index(model: Path) -> Path:
+    """Validate the fixed staged-provider index; clients cannot supply it."""
+    if not STAGED_TENSOR_INDEX.is_file():
+        raise ValueError("staged tensor index is missing")
+    try:
+        doc = json.loads(STAGED_TENSOR_INDEX.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("staged tensor index is invalid") from exc
+    if doc.get("model_dir") != str(model.parent):
+        raise ValueError("staged tensor index model directory mismatch")
+    tensors = doc.get("tensors")
+    if not isinstance(tensors, list) or not tensors:
+        raise ValueError("staged tensor index has no tensor entries")
+    shards = {entry.get("shard") for entry in tensors if isinstance(entry, dict)}
+    if not all((model.parent / shard).is_file() for shard in shards if isinstance(shard, str)):
+        raise ValueError("staged tensor index references missing model shards")
+    return STAGED_TENSOR_INDEX
 
 
 def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]]:
@@ -105,6 +125,7 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
         env["CORTEX_FLASHNEXT_GRAPH_FORENSICS"] = "1"
     elif args.target == "staged":
         env["CORTEX_FLASHNEXT_STAGED_MOE"] = "1"
+        env["FLASHNEXT_TENSOR_INDEX"] = str(validate_staged_index(model))
     elif args.target.startswith("quortex") or args.target == "chain":
         env.update({"QUORTEX_TWO_TOKEN_STATE": "1", "CORTEX_FLASHNEXT_LAYER_START": "0", "CORTEX_FLASHNEXT_LAYER_END": "1", "CORTEX_FLASHNEXT_LAYER_RANGE": "1"})
     else:
