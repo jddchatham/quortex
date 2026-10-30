@@ -93,6 +93,9 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
         env["FLASHNEXT_TENSOR_INDEX"] = str(index)
     if args.target == "two-range":
         env["CORTEX_FLASHNEXT_TWO_RANGE"] = "1"
+        # The model loader uses this gate to select bounded FlashNext tensor
+        # residency and bind streamed weights before graph allocation.
+        env["CORTEX_FLASHNEXT_LAYER_RANGE"] = "1"
         env["CORTEX_FLASHNEXT_GRAPH_FORENSICS"] = "1"
     elif args.target.startswith("quortex") or args.target == "chain":
         env.update({"QUORTEX_TWO_TOKEN_STATE": "1", "CORTEX_FLASHNEXT_LAYER_START": "0", "CORTEX_FLASHNEXT_LAYER_END": "1", "CORTEX_FLASHNEXT_LAYER_RANGE": "1"})
