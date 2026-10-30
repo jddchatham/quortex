@@ -11,7 +11,7 @@ except ImportError:
     from quortex.autonomy.inference_service import BASE, INBOX, RESPONSES
 
 def main() -> int:
-    p=argparse.ArgumentParser(); p.add_argument("--operation", choices=["two_token_reference", "two_layer_cortex_reference", "two_token_quortex", "two_layer_quortex"], required=True); p.add_argument("--model", required=True); p.add_argument("--output", required=True); p.add_argument("--evidence", required=True); p.add_argument("--index"); p.add_argument("--timeout", type=int, default=120); a=p.parse_args()
+    p=argparse.ArgumentParser(); p.add_argument("--operation", choices=["two_token_reference", "two_layer_cortex_reference", "two_token_quortex", "two_layer_quortex", "two_range_flashnext"], required=True); p.add_argument("--model", required=True); p.add_argument("--output", required=True); p.add_argument("--evidence", required=True); p.add_argument("--index"); p.add_argument("--timeout", type=int, default=120); a=p.parse_args()
     rid=f"req-{int(time.time())}-{secrets.token_hex(6)}"; req={"request_id":rid,"operation":a.operation,"model":a.model,"output":a.output,"evidence":a.evidence}
     if a.index: req["index"]=a.index
     INBOX.mkdir(parents=True, exist_ok=True); RESPONSES.mkdir(parents=True, exist_ok=True)
