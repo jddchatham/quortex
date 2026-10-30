@@ -122,6 +122,8 @@ def main() -> int:
             return 3
         start = time.monotonic()
         command = [str(exe), str(model)]
+        if args.target == "two-range":
+            command.append(str(out / "layer0-1-output.bin"))
         if args.target == "chain":
             command += [str(Path(args.index).resolve()), str(out)]
         if args.target == "reference":
