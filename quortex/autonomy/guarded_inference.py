@@ -37,7 +37,7 @@ APPROVED_DEPENDENCY_SHA256 = {
         "libggml-base.so.0.25.3": "426046f381f53747aa42c46686fcebafb3b3d3f7a2993545a56f171259ba9db2",
     },
     "staged": {
-        "libggml-base.so.0.25.3": "35704260ca2f4c9e505b154fda4a37c7d53f8cd10b704576bb38e68c1b52f253",
+        "libggml-base.so.0.25.3": "8ea7ef14ba0355b870ae7c8be2b760507203071e50ec67a2239ee65ce58479a1",
     },
 }
 MAX_AS = 1536 * 1024 * 1024
