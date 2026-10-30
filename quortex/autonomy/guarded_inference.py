@@ -21,16 +21,22 @@ ALLOWED = {
     "chain": ROOT / "native" / "debug" / "quortex-flashnext-chain",
     "reference": Path("/home/user/bitnet-cortex/cortex-stream-forge/runtime-flashnext-layer-exp-build/bin/llama-flashnext-owned-layer"),
     "two-range": Path("/tmp/quortex-qies109-wt.Tgz8zp/build-qies116/bin/llama-flashnext-two-range"),
+    "staged": Path("/tmp/quortex-qies109-wt.Tgz8zp/runtime-flashnext-layer-exp/build-qies142/bin/llama-flashnext-two-range"),
 }
 APPROVED_SHA256 = {
     "two-range": "41ad54216564564e17610a6bee5de14e4a4fe04f23d97f8db2a526575d250c75",
+    "staged": "13215449904d87d04b7fc48fc6ffa214878594d26622bb89898019c668af8029",
 }
 APPROVED_LIBRARY_SHA256 = {
     "two-range": "c0e614211a5f1bac9ff1db35303571b6ecbdc4f3249644e75efa9a8a51d009bd",
+    "staged": "48cd41c733d6c11205bd5d034c826f09d3981cee2379b298636f8cc32b163504",
 }
 APPROVED_DEPENDENCY_SHA256 = {
     "two-range": {
         "libggml-base.so.0.25.3": "426046f381f53747aa42c46686fcebafb3b3d3f7a2993545a56f171259ba9db2",
+    },
+    "staged": {
+        "libggml-base.so.0.25.3": "eab577bc146f5db253fb4788dd458ca58c66dd4a32c74440f722df94cde05be1",
     },
 }
 MAX_AS = 1536 * 1024 * 1024
@@ -42,7 +48,7 @@ ALLOWED_ENV = {
     "CORTEX_FLASHNEXT_SEGMENT_B_INPUT_WIDTH", "CORTEX_FLASHNEXT_INTERNAL_TENSOR_DIAGNOSTICS",
     "CORTEX_REFERENCE_TWO_TOKEN_ONLY", "CORTEX_FLASHNEXT_CHAIN_1_2", "QUORTEX_TWO_TOKEN_STATE",
     "QUORTEX_FULL_LAYER0_STREAMED", "CORTEX_FLASHNEXT_TWO_RANGE", "FLASHNEXT_TENSOR_INDEX", "FLASHNEXT_COMPARE_DIR",
-    "QUORTEX_CHAIN_RANGE",
+    "QUORTEX_CHAIN_RANGE", "CORTEX_FLASHNEXT_STAGED_MOE",
 }
 
 
@@ -97,6 +103,8 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
         # residency and bind streamed weights before graph allocation.
         env["CORTEX_FLASHNEXT_LAYER_RANGE"] = "1"
         env["CORTEX_FLASHNEXT_GRAPH_FORENSICS"] = "1"
+    elif args.target == "staged":
+        env["CORTEX_FLASHNEXT_STAGED_MOE"] = "1"
     elif args.target.startswith("quortex") or args.target == "chain":
         env.update({"QUORTEX_TWO_TOKEN_STATE": "1", "CORTEX_FLASHNEXT_LAYER_START": "0", "CORTEX_FLASHNEXT_LAYER_END": "1", "CORTEX_FLASHNEXT_LAYER_RANGE": "1"})
     else:
@@ -135,7 +143,7 @@ def main() -> int:
             return 3
         start = time.monotonic()
         command = [str(exe), str(model)]
-        if args.target == "two-range":
+        if args.target in ("two-range", "staged"):
             command.append(str(out / "layer0-1-output.bin"))
         if args.target == "chain":
             command += [str(Path(args.index).resolve()), str(out)]
