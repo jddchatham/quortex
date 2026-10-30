@@ -28,6 +28,11 @@ APPROVED_SHA256 = {
 APPROVED_LIBRARY_SHA256 = {
     "two-range": "db0faf50da598104eefac3c0137fec498066df0b099b962644fcb465ee636003",
 }
+APPROVED_DEPENDENCY_SHA256 = {
+    "two-range": {
+        "libggml-base.so.0.25.3": "b437d8bff6502550785e5d78d8c944e1a76be4d55300db7fbbc7cae323e1dc70",
+    },
+}
 MAX_AS = 1536 * 1024 * 1024
 TIMEOUT = 90
 ALLOWED_ENV = {
@@ -61,6 +66,10 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
         library = exe.parent / "libllama.so"
         if not library.is_file() or sha256(library) != expected_library_hash:
             raise ValueError("approved Cortex library hash mismatch")
+    for name, expected_hash in APPROVED_DEPENDENCY_SHA256.get(args.target, {}).items():
+        dependency = exe.parent / name
+        if not dependency.is_file() or sha256(dependency) != expected_hash:
+            raise ValueError(f"approved dependency hash mismatch: {name}")
     model = Path(args.model).resolve()
     if not model.is_file() or not model.name.endswith(".gguf"):
         raise ValueError("model must be an existing GGUF file")
@@ -84,6 +93,7 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
         env["FLASHNEXT_TENSOR_INDEX"] = str(index)
     if args.target == "two-range":
         env["CORTEX_FLASHNEXT_TWO_RANGE"] = "1"
+        env["CORTEX_FLASHNEXT_GRAPH_FORENSICS"] = "1"
     elif args.target.startswith("quortex") or args.target == "chain":
         env.update({"QUORTEX_TWO_TOKEN_STATE": "1", "CORTEX_FLASHNEXT_LAYER_START": "0", "CORTEX_FLASHNEXT_LAYER_END": "1", "CORTEX_FLASHNEXT_LAYER_RANGE": "1"})
     else:
