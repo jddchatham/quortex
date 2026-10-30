@@ -29,7 +29,7 @@ APPROVED_SHA256 = {
 }
 APPROVED_LIBRARY_SHA256 = {
     "two-range": "c0e614211a5f1bac9ff1db35303571b6ecbdc4f3249644e75efa9a8a51d009bd",
-    "staged": "d37400e2f97cb2ea8de754bcd515a6fbed39d7a255e3564bce0117cdc3d52916",
+    "staged": "bd28bcda383b24c3fce19ba5df99bf83c2282f4da350c44dbbba2dffed11167d",
 }
 APPROVED_DEPENDENCY_SHA256 = {
     "two-range": {

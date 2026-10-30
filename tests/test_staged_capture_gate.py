@@ -12,7 +12,7 @@ class StagedCaptureGateTests(unittest.TestCase):
 
     def test_staged_launcher_pin_and_flag(self):
         source = pathlib.Path("quortex/autonomy/guarded_inference.py").read_text()
-        self.assertIn('"staged": "d37400e2f97cb2ea8de754bcd515a6fbed39d7a255e3564bce0117cdc3d52916"', source)
+        self.assertIn('"staged": "bd28bcda383b24c3fce19ba5df99bf83c2282f4da350c44dbbba2dffed11167d"', source)
         self.assertIn('env["CORTEX_FLASHNEXT_STAGED_MOE"] = "1"', source)
 
 
