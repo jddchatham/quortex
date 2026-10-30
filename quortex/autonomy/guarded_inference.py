@@ -20,6 +20,13 @@ ALLOWED = {
     "quortex-build": ROOT / "native" / "build" / "quortex-flashnext-layer0",
     "chain": ROOT / "native" / "debug" / "quortex-flashnext-chain",
     "reference": Path("/home/user/bitnet-cortex/cortex-stream-forge/runtime-flashnext-layer-exp-build/bin/llama-flashnext-owned-layer"),
+    "two-range": Path("/tmp/quortex-qies109-wt.Tgz8zp/build-qies116/bin/llama-flashnext-two-range"),
+}
+APPROVED_SHA256 = {
+    "two-range": "41ad54216564564e17610a6bee5de14e4a4fe04f23d97f8db2a526575d250c75",
+}
+APPROVED_LIBRARY_SHA256 = {
+    "two-range": "a146337053e86b59af2f39469d7eadb226216a47e87e5bf7769abeaf06956a17",
 }
 MAX_AS = 1536 * 1024 * 1024
 TIMEOUT = 90
@@ -29,7 +36,7 @@ ALLOWED_ENV = {
     "CORTEX_FLASHNEXT_PRE_MOE", "CORTEX_FLASHNEXT_SEGMENT_B",
     "CORTEX_FLASHNEXT_SEGMENT_B_INPUT_WIDTH", "CORTEX_FLASHNEXT_INTERNAL_TENSOR_DIAGNOSTICS",
     "CORTEX_REFERENCE_TWO_TOKEN_ONLY", "CORTEX_FLASHNEXT_CHAIN_1_2", "QUORTEX_TWO_TOKEN_STATE",
-    "QUORTEX_FULL_LAYER0_STREAMED", "FLASHNEXT_TENSOR_INDEX", "FLASHNEXT_COMPARE_DIR",
+    "QUORTEX_FULL_LAYER0_STREAMED", "CORTEX_FLASHNEXT_TWO_RANGE", "FLASHNEXT_TENSOR_INDEX", "FLASHNEXT_COMPARE_DIR",
     "QUORTEX_CHAIN_RANGE",
 }
 
@@ -46,6 +53,14 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
     exe = ALLOWED.get(args.target)
     if exe is None or not exe.is_file() or not os.access(exe, os.X_OK):
         raise ValueError(f"target is not an approved executable: {args.target}")
+    expected_hash = APPROVED_SHA256.get(args.target)
+    if expected_hash is not None and sha256(exe) != expected_hash:
+        raise ValueError("approved executable hash mismatch")
+    expected_library_hash = APPROVED_LIBRARY_SHA256.get(args.target)
+    if expected_library_hash is not None:
+        library = exe.parent / "libllama.so"
+        if not library.is_file() or sha256(library) != expected_library_hash:
+            raise ValueError("approved Cortex library hash mismatch")
     model = Path(args.model).resolve()
     if not model.is_file() or not model.name.endswith(".gguf"):
         raise ValueError("model must be an existing GGUF file")
@@ -67,7 +82,9 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
         env.update({"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"})
     if index:
         env["FLASHNEXT_TENSOR_INDEX"] = str(index)
-    if args.target.startswith("quortex") or args.target == "chain":
+    if args.target == "two-range":
+        env["CORTEX_FLASHNEXT_TWO_RANGE"] = "1"
+    elif args.target.startswith("quortex") or args.target == "chain":
         env.update({"QUORTEX_TWO_TOKEN_STATE": "1", "CORTEX_FLASHNEXT_LAYER_START": "0", "CORTEX_FLASHNEXT_LAYER_END": "1", "CORTEX_FLASHNEXT_LAYER_RANGE": "1"})
     else:
         if args.mode == "two-layer":

@@ -11,7 +11,7 @@ except ImportError:
 
 BASE = ROOT / "quortex" / "autonomy" / "requests"
 INBOX, RESPONSES = BASE / "inbox", BASE / "responses"
-OPS = {"two_token_reference": "reference", "two_layer_cortex_reference": "reference", "two_token_quortex": "quortex", "two_layer_quortex": "chain"}
+OPS = {"two_token_reference": "reference", "two_layer_cortex_reference": "reference", "two_token_quortex": "quortex", "two_layer_quortex": "chain", "two_range_flashnext": "two-range"}
 MAX_AGE = 120
 
 def atomic(path: Path, value: dict) -> None:
