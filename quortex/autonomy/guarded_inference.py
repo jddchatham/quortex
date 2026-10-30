@@ -26,7 +26,7 @@ APPROVED_SHA256 = {
     "two-range": "41ad54216564564e17610a6bee5de14e4a4fe04f23d97f8db2a526575d250c75",
 }
 APPROVED_LIBRARY_SHA256 = {
-    "two-range": "f5f72adbb22bfdfb86c82b64942a6bcb47716e5383d2d266b49acfad4e7fc649",
+    "two-range": "c0e614211a5f1bac9ff1db35303571b6ecbdc4f3249644e75efa9a8a51d009bd",
 }
 APPROVED_DEPENDENCY_SHA256 = {
     "two-range": {
