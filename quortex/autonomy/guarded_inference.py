@@ -49,7 +49,7 @@ ALLOWED_ENV = {
     "CORTEX_FLASHNEXT_SEGMENT_B_INPUT_WIDTH", "CORTEX_FLASHNEXT_INTERNAL_TENSOR_DIAGNOSTICS",
     "CORTEX_REFERENCE_TWO_TOKEN_ONLY", "CORTEX_FLASHNEXT_CHAIN_1_2", "QUORTEX_TWO_TOKEN_STATE",
     "QUORTEX_FULL_LAYER0_STREAMED", "CORTEX_FLASHNEXT_TWO_RANGE", "FLASHNEXT_TENSOR_INDEX", "FLASHNEXT_COMPARE_DIR",
-    "QUORTEX_CHAIN_RANGE", "CORTEX_FLASHNEXT_STAGED_MOE",
+    "QUORTEX_CHAIN_RANGE", "CORTEX_FLASHNEXT_STAGED_MOE", "CORTEX_FLASHNEXT_INPUT_AUDIT",
 }
 
 
@@ -125,6 +125,7 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, Path, dict[str, str]
         env["CORTEX_FLASHNEXT_GRAPH_FORENSICS"] = "1"
     elif args.target == "staged":
         env["CORTEX_FLASHNEXT_STAGED_MOE"] = "1"
+        env["CORTEX_FLASHNEXT_INPUT_AUDIT"] = "1"
         env["FLASHNEXT_TENSOR_INDEX"] = str(validate_staged_index(model))
     elif args.target.startswith("quortex") or args.target == "chain":
         env.update({"QUORTEX_TWO_TOKEN_STATE": "1", "CORTEX_FLASHNEXT_LAYER_START": "0", "CORTEX_FLASHNEXT_LAYER_END": "1", "CORTEX_FLASHNEXT_LAYER_RANGE": "1"})
@@ -170,13 +171,14 @@ def main() -> int:
             command += [str(Path(args.index).resolve()), str(out)]
         if args.target == "reference":
             command.append(str(Path(args.index).resolve()))
-        evidence = {"target": args.target, "command": command, "model": str(model), "model_sha256": sha256(model), "output": str(out), "rlimit_as_bytes": MAX_AS, "timeout_seconds": TIMEOUT, "cgroup_required": {"MemoryMax": "2G", "MemorySwapMax": "0", "TasksMax": 64}, "environment": env}
+        unit_name = f"quortex-guarded-{os.getpid()}-{int(start * 1000)}"
+        evidence = {"target": args.target, "command": command, "model": str(model), "model_sha256": sha256(model), "output": str(out), "rlimit_as_bytes": MAX_AS, "timeout_seconds": TIMEOUT, "systemd_unit": unit_name, "cgroup_required": {"MemoryMax": "2G", "MemorySwapMax": "0", "TasksMax": 64}, "environment": env}
         # systemd-run is mandatory: RLIMIT_AS alone does not satisfy the physical-memory gate.
         # systemd-run starts the unit from the user manager environment; the
         # Python client's env is not inherited. Pass only the already-filtered
         # diagnostic variables explicitly, so capture paths and mode flags
         # cannot silently disappear at the privilege boundary.
-        systemd = ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect", "-p", "MemoryMax=2G", "-p", "MemorySwapMax=0", "-p", "TasksMax=64"]
+        systemd = ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect", "--unit", unit_name, "-p", "MemoryMax=2G", "-p", "MemorySwapMax=0", "-p", "TasksMax=64"]
         for key, value in sorted(env.items()):
             systemd += [f"--setenv={key}={value}"]
         systemd += ["--"] + command
@@ -186,7 +188,13 @@ def main() -> int:
             proc = subprocess.run(systemd, cwd=ROOT, env=env, preexec_fn=set_limits, timeout=TIMEOUT, text=True, capture_output=True)
             evidence.update({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr, "wall_seconds": time.monotonic() - start})
         except (subprocess.TimeoutExpired, OSError) as exc:
-            evidence.update({"returncode": 124, "error": repr(exc), "wall_seconds": time.monotonic() - start})
+            stopped = False
+            try:
+                stop = subprocess.run(["systemctl", "--user", "stop", unit_name], timeout=10, text=True, capture_output=True)
+                stopped = stop.returncode == 0
+            except OSError:
+                pass
+            evidence.update({"returncode": 124, "error": repr(exc), "timeout_enforced": stopped, "wall_seconds": time.monotonic() - start})
             proc = None
         Path(args.evidence).resolve().parent.mkdir(parents=True, exist_ok=True)
         Path(args.evidence).resolve().write_text(json.dumps(evidence, indent=2) + "\n")
