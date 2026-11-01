@@ -1,0 +1,2 @@
+std::getenv("CORTEX_FLASHNEXT_STAGED_MOE")
+flashnext_diag_owned[it.first]
