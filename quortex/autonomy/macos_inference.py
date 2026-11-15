@@ -53,10 +53,19 @@ LOCK = ROOT / "quortex" / "autonomy" / "inference.darwin.lock"
 # optional; when present they are enforced (fail-closed).
 ALLOWED = {
     "arm64-smoke": ROOT / "native" / "build" / "macos-arm64-smoke",
+    # M-MAC-01: Cortex ggml-0.25.3 diagnostic targets, built natively for
+    # arm64 against cortex-stream-forge @ e3a408e (see evidence/m-mac-01/).
+    # The model-taking targets receive their GGUF path as remainder argv.
+    "gguf-diagnostic": ROOT / "native" / "build-mac" / "quortex-gguf-diagnostic",
+    "tensor-allocation": ROOT / "native" / "build-mac" / "quortex-tensor-allocation",
+    "flashnext-op": ROOT / "native" / "build-mac" / "quortex-flashnext-op",
 }
 APPROVED_SHA256 = {
-    # Populated after a verified build is pinned; absent means "not yet
-    # pinned" and the hash check is skipped (the allowlist still applies).
+    # M-MAC-01 pinned build (clang-1700 arm64, ggml 0.25.3, Cortex e3a408e).
+    # Any rebuild invalidates the pin and must be re-approved with evidence.
+    "gguf-diagnostic": "7e4d291fd1f47b12d2b5d3bc7c2e433dd6943b10310ba9f76fe7c81b5df5c710",
+    "tensor-allocation": "0a89aebf9d86f3b57eb1a96aab6a9738c595df55d7eed65d94ab12649eb45099",
+    "flashnext-op": "0eb75b386bb9a6fb0da4deb2f84745c5698a9b41a836372849227cea31fabcdd",
 }
 
 DEFAULT_TIMEOUT = 60

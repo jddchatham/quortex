@@ -1,2 +1,3 @@
 native/build/
+native/build-mac/
 *.evidence.json

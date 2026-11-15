@@ -120,3 +120,34 @@ M-MAC-01: clone `cortex-stream-forge` read-only, build **ggml-only** targets
 `-DGGML_NATIVE=ON` (host arm64), run both under `macos_inference.py` with the
 existing guards, and only then evaluate the llama-linked FlashNext targets.
 No model weights, no inference, until M-MAC-01 evidence is recorded.
+
+---
+
+## M-MAC-01 — Native Cortex ARM64 qualification (2026-11-15): PASS
+
+* cortex-stream-forge cloned read-only at `/Users/user/workspace/cortex-stream-forge`,
+  exact revision recorded: commit `e3a408e9c2ee301f8b3eb80e58db413f162489e5`
+  ("docs: record verified 47-layer bounded streaming milestone…", 2026-10-11).
+  ggml source tree used: `runtime-flashnext-layer-exp/ggml` (version 0.25.3).
+* Built natively for arm64 (Apple clang 17.0.0, cmake user-local, ninja):
+  `quortex-gguf-diagnostic`, `quortex-tensor-allocation`, `quortex-flashnext-op`
+  — all `Mach-O 64-bit executable arm64`. Metal is auto-included by ggml's
+  CMake on Darwin but the diagnostics explicitly select the CPU backend
+  (`GGML_BACKEND_DEVICE_TYPE_CPU`); kernel-compile log noise is transient.
+* Executed under `macos_inference.py` (2 GB cap, 120 s bound): all rc 0.
+  Real local model input (pre-existing Ollama Qwen3 blob, nothing downloaded):
+  TENSORS=399 / ALIGNMENT=32, cross-checked with an independent parser
+  (gguf-py): exact agreement incl. tensor[0]=output.weight type 14
+  shape [4096,151936] bytes 510504960. flashnext-op real-weight op:
+  `REAL_WEIGHT_OP=PASS tensor=blk.0.attn_k.weight shape=[4096,1024] finite=YES`,
+  3-run output identical (sha256 `8b91a506…`). tensor-allocation `OWNERSHIP=PASS`.
+* Guards verified live: 8 MB cap on flashnext-op → SIGKILL rc 137
+  (`rss_cap_enforced`, peak 13,353,560 B); unapproved target → rc 2;
+  timeout/process-group kill verified by supervisor unit tests.
+* Hashes pinned in `APPROVED_SHA256` (quortex/autonomy/macos_inference.py):
+  gguf-diagnostic `7e4d291f…`, tensor-allocation `0a89aebf…`,
+  flashnext-op `0eb75b38…`. Full evidence record:
+  `quortex/autonomy/evidence/m-mac-01/EVIDENCE.json` (transient by design —
+  not committed, per repo convention; hashes and results are committed here).
+* Restrictions honored: no weights downloaded, no inference, no guard
+  weakened, production untouched, nothing pushed, acceptance tests unmodified.
