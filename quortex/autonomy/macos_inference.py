@@ -62,6 +62,9 @@ ALLOWED = {
     # M-MAC-02: deterministic inference probe against the pinned Cortex
     # llama library.  Remainder argv: MODEL.gguf N_TOKENS(1|2).
     "llama-probe": ROOT / "native" / "build-mac" / "macos-llama-probe",
+    # M-MAC-04: persistent two-segment session probe. Remainder argv:
+    # MODEL.gguf {session|combined|slow}.
+    "llama-session": ROOT / "native" / "build-mac" / "macos-llama-session",
 }
 APPROVED_SHA256 = {
     # M-MAC-01 pinned build (clang-1700 arm64, ggml 0.25.3, Cortex e3a408e).
@@ -71,6 +74,8 @@ APPROVED_SHA256 = {
     "flashnext-op": "0eb75b386bb9a6fb0da4deb2f84745c5698a9b41a836372849227cea31fabcdd",
     # M-MAC-02 pinned probe (clang-1700 arm64, Cortex libllama 0.5.0-dev @ e3a408e).
     "llama-probe": "3c16d3124759fae4d519c5a8d883df9d5f014c65fb91e4a60f862c9c75333e15",
+    # M-MAC-04 pinned session probe (Cortex libllama @ e3a408e, arm64 CPU).
+    "llama-session": "232bdb193824cfd12258063e8ac53037f6c864d50a599096836eb4df1d3929aa",
 }
 
 DEFAULT_TIMEOUT = 60
