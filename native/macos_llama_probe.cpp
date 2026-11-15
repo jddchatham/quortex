@@ -72,8 +72,8 @@ int main(int argc, char ** argv) {
         return 2;
     }
     const int n_gen = argc > 2 ? std::atoi(argv[2]) : 1;
-    if (n_gen < 1 || n_gen > 2) {
-        std::fprintf(stderr, "N_TOKENS must be 1 or 2\n");
+    if (n_gen < 1 || n_gen > 8) {
+        std::fprintf(stderr, "N_TOKENS must be between 1 and 8\n");
         return 2;
     }
 
@@ -137,24 +137,23 @@ int main(int argc, char ** argv) {
                 static_cast<double>(logits[0]), static_cast<double>(logits[1]),
                 static_cast<double>(logits[2]), static_cast<double>(logits[3]));
 
-    llama_token gen0 = static_cast<llama_token>(argmax(logits, n_vocab));
-    print_token_line("GEN", 0, vocab, gen0);
+    llama_token prev = static_cast<llama_token>(argmax(logits, n_vocab));
+    print_token_line("GEN", 0, vocab, prev);
 
-    if (n_gen >= 2) {
-        llama_token in = gen0;
-        llama_batch step = llama_batch_get_one(&in, 1);
+    for (int i = 1; i < n_gen; ++i) {
+        llama_batch step = llama_batch_get_one(&prev, 1);
         if (llama_decode(ctx, step) != 0) {
-            std::fprintf(stderr, "DECODE_STEP_FAIL\n");
+            std::fprintf(stderr, "DECODE_STEP_%d_FAIL\n", i);
             return 1;
         }
-        const float * l1 = llama_get_logits_ith(ctx, -1);
-        if (!l1) {
-            std::fprintf(stderr, "LOGITS1_NULL\n");
+        const float * li = llama_get_logits_ith(ctx, -1);
+        if (!li) {
+            std::fprintf(stderr, "LOGITS%d_NULL\n", i);
             return 1;
         }
-        std::printf("LOGITS1_SHA256=%s\n", sha256_hex(l1, logit_bytes).c_str());
-        llama_token gen1 = static_cast<llama_token>(argmax(l1, n_vocab));
-        print_token_line("GEN", 1, vocab, gen1);
+        std::printf("LOGITS%d_SHA256=%s\n", i, sha256_hex(li, logit_bytes).c_str());
+        prev = static_cast<llama_token>(argmax(li, n_vocab));
+        print_token_line("GEN", i, vocab, prev);
     }
 
     std::puts("PROBE_PASS=1");

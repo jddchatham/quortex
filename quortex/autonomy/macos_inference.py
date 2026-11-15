@@ -70,7 +70,7 @@ APPROVED_SHA256 = {
     "tensor-allocation": "0a89aebf9d86f3b57eb1a96aab6a9738c595df55d7eed65d94ab12649eb45099",
     "flashnext-op": "0eb75b386bb9a6fb0da4deb2f84745c5698a9b41a836372849227cea31fabcdd",
     # M-MAC-02 pinned probe (clang-1700 arm64, Cortex libllama 0.5.0-dev @ e3a408e).
-    "llama-probe": "37627e2f1e663a9b15f44e04c72e85937712497a52b62284cf2537e1ea50d42d",
+    "llama-probe": "3c16d3124759fae4d519c5a8d883df9d5f014c65fb91e4a60f862c9c75333e15",
 }
 
 DEFAULT_TIMEOUT = 60
