@@ -80,7 +80,16 @@ static bool install_memory_guard() {
     if (getrlimit(RLIMIT_AS, &current) != 0) return false;
     if (current.rlim_cur != RLIM_INFINITY && current.rlim_cur <= limit) return true;
     struct rlimit next{limit, current.rlim_max == RLIM_INFINITY ? limit : std::min<rlim_t>(current.rlim_max, limit)};
-    return setrlimit(RLIMIT_AS, &next) == 0;
+    if (setrlimit(RLIMIT_AS, &next) == 0) return true;
+    // M-MAC-07 (experimental branch): Darwin user processes cannot set
+    // RLIMIT_AS (measured on macOS 15.3.1).  Accept only when the external
+    // supervisor that enforces the equivalent physical cap attests itself via
+    // the fixed marker env pair below; anything else stays fail-closed.
+    const char * sup = std::getenv("QUORTEX_DARWIN_SUPERVISOR");
+    const char * cap = std::getenv("QUORTEX_DARWIN_RSS_CAP_MB");
+    if (!sup || std::strcmp(sup, "phys_footprint") != 0 || !cap) return false;
+    const unsigned long long cap_mb = std::strtoull(cap, nullptr, 10);
+    return cap_mb >= 512 && cap_mb <= mb;
 }
 
 int main(int argc, char ** argv) {
