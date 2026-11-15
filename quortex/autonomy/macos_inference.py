@@ -59,6 +59,9 @@ ALLOWED = {
     "gguf-diagnostic": ROOT / "native" / "build-mac" / "quortex-gguf-diagnostic",
     "tensor-allocation": ROOT / "native" / "build-mac" / "quortex-tensor-allocation",
     "flashnext-op": ROOT / "native" / "build-mac" / "quortex-flashnext-op",
+    # M-MAC-02: deterministic inference probe against the pinned Cortex
+    # llama library.  Remainder argv: MODEL.gguf N_TOKENS(1|2).
+    "llama-probe": ROOT / "native" / "build-mac" / "macos-llama-probe",
 }
 APPROVED_SHA256 = {
     # M-MAC-01 pinned build (clang-1700 arm64, ggml 0.25.3, Cortex e3a408e).
@@ -66,6 +69,8 @@ APPROVED_SHA256 = {
     "gguf-diagnostic": "7e4d291fd1f47b12d2b5d3bc7c2e433dd6943b10310ba9f76fe7c81b5df5c710",
     "tensor-allocation": "0a89aebf9d86f3b57eb1a96aab6a9738c595df55d7eed65d94ab12649eb45099",
     "flashnext-op": "0eb75b386bb9a6fb0da4deb2f84745c5698a9b41a836372849227cea31fabcdd",
+    # M-MAC-02 pinned probe (clang-1700 arm64, Cortex libllama 0.5.0-dev @ e3a408e).
+    "llama-probe": "37627e2f1e663a9b15f44e04c72e85937712497a52b62284cf2537e1ea50d42d",
 }
 
 DEFAULT_TIMEOUT = 60
