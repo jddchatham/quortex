@@ -151,3 +151,33 @@ No model weights, no inference, until M-MAC-01 evidence is recorded.
   not committed, per repo convention; hashes and results are committed here).
 * Restrictions honored: no weights downloaded, no inference, no guard
   weakened, production untouched, nothing pushed, acceptance tests unmodified.
+
+---
+
+## M-MAC-02 - Guarded small-model inference (2026-11-15): PASS
+
+* Model: Qwen2.5-0.5B-Instruct Q8_0, `/Users/user/workspace/models/Qwen2.5-0.5B-Instruct-Q8_0.gguf`
+  (531,068,480 bytes). SHA-256 `25130a98aa782284a7dabea0c23245b2fd371ed47244e79d78b8ec23245fdf96`
+  matches the Hugging Face LFS oid exactly. Weights downloaded once; stored outside the repo.
+* Cortex llama library built natively for arm64 from pinned revision e3a408e
+  (writable build copy `cortex-build-src` = e3a408e + two recorded inert
+  scaffolding files, hashes in evidence; canonical clone untouched).
+  Config: common/tools/tests/examples OFF, GGML_NATIVE OFF, GGML_METAL OFF,
+  shared libs; outputs `libllama.0.5.0.dylib` + ggml dylibs (arm64).
+  The trimmed handoff tree lacks examples/cli, so inference runs through a
+  new deterministic probe `native/macos_llama_probe.cpp` (greedy argmax,
+  temperature-0 equivalent, CPU backend, fixed prompt, logit-vector SHA-256
+  fingerprints; fail-closed exits).
+* Supervised matrix (2 GB phys_footprint cap, 90 s bound): three n=1 runs and
+  three n=2 runs, all rc 0, peak 531-541 MB, wall ~0.46 s. Numerical
+  signatures identical in every run: LOGITS0_SHA256 `1b84aa06...`, GEN0_ID
+  12095 (" Paris"), LOGITS1_SHA256 `c8c4186f...`, GEN1_ID 13 (".").  Two-token
+  runs reproduce the one-token position-0 state exactly (state continuity).
+* Independent reference: Ollama 0.40.16 `qwen2.5:0.5b-instruct-q8_0`, raw
+  prompt, temperature 0 -> " Paris. It" - first two greedy tokens identical.
+* Guards live: llama-probe under a 64 MB cap -> SIGKILL rc 137
+  (`rss_cap_enforced`, peak 93,913,080 B). Unapproved target -> rc 2.
+  Full regression unchanged (89/93, same four pre-existing /home/user blockers).
+* Probe binary SHA-256 pinned in APPROVED_SHA256: `37627e2f...`.
+  Evidence: `quortex/autonomy/evidence/m-mac-02/EVIDENCE.json`.
+* No 8B inference. No acceleration claims. Nothing pushed.
