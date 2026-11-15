@@ -141,7 +141,7 @@ int main(int argc, char ** argv) {
         return 2;
     }
     const std::string mode = argv[2];
-    if (mode != "session" && mode != "combined" && mode != "slow" && mode != "batchcheck") {
+    if (mode != "session" && mode != "combined" && mode != "slow" && mode != "batchcheck" && mode != "drift") {
         std::fprintf(stderr, "invalid mode: %s\n", mode.c_str());
         return 2;
     }
@@ -161,7 +161,18 @@ int main(int argc, char ** argv) {
     Session s(model);
     if (!s.ctx) { std::fprintf(stderr, "CTX_INIT_FAIL\n"); return 1; }
 
-    const std::vector<llama_token> toksA = s.tokenize(kSegA, true);
+    std::vector<llama_token> toksA = s.tokenize(kSegA, true);
+    if (mode == "drift") {
+        // Controlled tamper: alter the final prompt token.  The resulting
+        // A-stream fingerprints MUST differ from the accepted values; the
+        // evidence analysis demonstrates detection.  Exits 0 - the probe
+        // reports, the gates decide.
+        const llama_token base = toksA.back();
+        toksA.back() = static_cast<llama_token>(static_cast<int>(base) + 5);
+        std::printf("DRIFT_INJECTED=1\n");
+        std::printf("DRIFT_BASE_TOKEN=%d\n", static_cast<int>(base));
+        std::printf("DRIFT_ALTERED_TOKEN=%d\n", static_cast<int>(toksA.back()));
+    }
     std::printf("A_TOKENS=%zu\n", toksA.size());
 
     if (mode == "combined") {
