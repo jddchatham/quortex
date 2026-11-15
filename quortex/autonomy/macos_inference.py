@@ -75,7 +75,7 @@ APPROVED_SHA256 = {
     # M-MAC-02 pinned probe (clang-1700 arm64, Cortex libllama 0.5.0-dev @ e3a408e).
     "llama-probe": "3c16d3124759fae4d519c5a8d883df9d5f014c65fb91e4a60f862c9c75333e15",
     # M-MAC-04 pinned session probe (Cortex libllama @ e3a408e, arm64 CPU).
-    "llama-session": "232bdb193824cfd12258063e8ac53037f6c864d50a599096836eb4df1d3929aa",
+    "llama-session": "af035b63cfd90a1fb94fb0ceed894dd817a90fb868d9cc445da9a3360988869e",
 }
 
 DEFAULT_TIMEOUT = 60

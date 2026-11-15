@@ -141,7 +141,7 @@ int main(int argc, char ** argv) {
         return 2;
     }
     const std::string mode = argv[2];
-    if (mode != "session" && mode != "combined" && mode != "slow") {
+    if (mode != "session" && mode != "combined" && mode != "slow" && mode != "batchcheck") {
         std::fprintf(stderr, "invalid mode: %s\n", mode.c_str());
         return 2;
     }
@@ -193,6 +193,49 @@ int main(int argc, char ** argv) {
     const size_t cells_after = toksA.size() + kGen + toksB.size() + kGen;
     std::printf("EXPECTED_KV_CELLS=%zu\n", cells_after);
     std::printf("TOTAL_DECODED=%zu\n", toksA.size() + kGen + toksB.size() + kGen);
+
+    if (mode == "batchcheck") {
+        // Batched-vs-sequential position correctness (runtime behavioral
+        // counterpart of the repository's batch-position source invariant).
+        // Three fresh contexts over the same model:
+        //   S: A as one 5-token batch, then B as one 7-token batch (segmented)
+        //   Q: all 12 prompt tokens decoded one at a time (fully sequential)
+        //   O: all 12 prompt tokens decoded as a single batch (fully batched)
+        // Requirement: final-position logits and all 4 generated fingerprints
+        // are bitwise identical across S, Q and O.
+        std::vector<llama_token> all = toksA;
+        all.insert(all.end(), toksB.begin(), toksB.end());
+
+        auto run_variant = [&](const char * tag, int variant) {
+            s.new_context();
+            if (variant == 0) {              // segmented batches
+                s.decode_segment(toksA, "S_A");
+                s.decode_segment(toksB, "S_B");
+            } else if (variant == 1) {       // one token per decode
+                for (size_t i = 0; i < all.size(); ++i) {
+                    llama_batch one = llama_batch_get_one(&all[i], 1);
+                    if (llama_decode(s.ctx, one) != 0) { std::fprintf(stderr, "Q_DECODE_%zu_FAIL\n", i); std::exit(1); }
+                }
+            } else {                         // single 12-token batch
+                s.decode_segment(all, "O_ALL");
+            }
+            const float * lf = llama_get_logits_ith(s.ctx, -1);
+            if (!lf) { std::fprintf(stderr, "%s_FINAL_NULL\n", tag); std::exit(1); }
+            std::printf("%s_FINAL_LOGITS_SHA256=%s\n", tag, sha256_hex(lf, s.logit_bytes).c_str());
+            std::vector<llama_token> gen;
+            s.generate(kGen, tag, &gen);
+            return gen;
+        };
+
+        const std::vector<llama_token> gS = run_variant("S", 0);
+        const std::vector<llama_token> gQ = run_variant("Q", 1);
+        const std::vector<llama_token> gO = run_variant("O", 2);
+        const bool pass = (gS == gQ) && (gQ == gO);
+        std::printf("BATCHCHECK_PASS=%d\n", pass ? 1 : 0);
+        llama_model_free(model);
+        llama_backend_free();
+        return pass ? 0 : 10;
+    }
 
     // Reset: fresh context from the SAME loaded model; segment A must reproduce.
     s.new_context();
