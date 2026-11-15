@@ -65,6 +65,8 @@ ALLOWED = {
     # M-MAC-04: persistent two-segment session probe. Remainder argv:
     # MODEL.gguf {session|combined|slow}.
     "llama-session": ROOT / "native" / "build-mac" / "macos-llama-session",
+    # M-MAC-08: QUORTEX FlashNext layer-0 (authentic Cortex recovery).
+    "flashnext-layer0": ROOT / "native" / "build-mac" / "quortex-flashnext-layer0",
 }
 APPROVED_SHA256 = {
     # M-MAC-01 pinned build (clang-1700 arm64, ggml 0.25.3, Cortex e3a408e).
@@ -76,6 +78,8 @@ APPROVED_SHA256 = {
     "llama-probe": "3c16d3124759fae4d519c5a8d883df9d5f014c65fb91e4a60f862c9c75333e15",
     # M-MAC-04 pinned session probe (Cortex libllama @ e3a408e, arm64 CPU).
     "llama-session": "a6c231f784748de799f79f3ab8616ffc10b9db12e79e4abc63699485086ab0e5",
+    # M-MAC-08 pinned layer-0 (Cortex @ e3a408e + verbatim 4e8a5aa recovery).
+    "flashnext-layer0": "ba8d973861c4e95ab0e39198075f2b230b190f12804dc3e3bdd19eef3a64d722",
 }
 
 DEFAULT_TIMEOUT = 60
@@ -86,6 +90,12 @@ POLL_SECONDS = 0.05
 ALLOWED_ENV = {
     "FLASHNEXT_TENSOR_INDEX",
     "FLASHNEXT_COMPARE_DIR",
+    "QUORTEX_TWO_TOKEN_STATE",
+    "QUORTEX_FULL_LAYER0_STREAMED",
+    # M-MAC-08: attestation pair the layer-0 binary requires before it will
+    # accept the supervisor-enforced memory cap in place of RLIMIT_AS.
+    "QUORTEX_DARWIN_SUPERVISOR",
+    "QUORTEX_DARWIN_RSS_CAP_MB",
 }
 
 
@@ -115,6 +125,10 @@ def validate(args: argparse.Namespace) -> tuple[Path, Path, dict[str, str]]:
         raise ValueError("output directory must be fresh and empty")
     env = {k: v for k, v in os.environ.items() if k in ALLOWED_ENV}
     env["FLASHNEXT_COMPARE_DIR"] = str(out)
+    # Attest the external memory gate for targets that require it (the
+    # layer-0 binary refuses to run on Darwin without this pair).
+    env["QUORTEX_DARWIN_SUPERVISOR"] = "phys_footprint"
+    env["QUORTEX_DARWIN_RSS_CAP_MB"] = str(args.rss_cap_mb)
     return exe, out, env
 
 
