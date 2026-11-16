@@ -92,6 +92,10 @@ ALLOWED_ENV = {
     "FLASHNEXT_COMPARE_DIR",
     "QUORTEX_TWO_TOKEN_STATE",
     "QUORTEX_FULL_LAYER0_STREAMED",
+    # M-MAC-11: Cortex streaming controls for bounded-residency loads of
+    # large standard-arch models (same fixed keys as the Linux guard).
+    "CORTEX_PREAD_ARENA",
+    "CORTEX_LOW_RESIDENCY_LAYER",
     # M-MAC-08: attestation pair the layer-0 binary requires before it will
     # accept the supervisor-enforced memory cap in place of RLIMIT_AS.
     "QUORTEX_DARWIN_SUPERVISOR",
