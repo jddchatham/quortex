@@ -95,6 +95,7 @@ int main(int argc, char ** argv) {
     cparams.n_batch = 512;
     cparams.n_threads = 4;
     cparams.n_threads_batch = 4;
+    cparams.embeddings = true;
     // Greedy argmax is used for generation; no RNG is involved anywhere.
     llama_context * ctx = llama_init_from_model(model, cparams);
     if (!ctx) {
@@ -116,7 +117,38 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "TOKENIZE_FAIL\n");
         return 1;
     }
+    if (const char * ids_env = std::getenv("PROBE_IDS")) {
+        prompt.clear();
+        for (const char * p = ids_env; *p; ) {
+            int v = 0, digits = 0;
+            while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); ++p; digits++; }
+            if (!digits) return 2;
+            prompt.push_back((llama_token) v);
+            if (*p == ',') ++p; else if (*p) return 2;
+        }
+    }
     std::printf("PROMPT_TOKENS=%d\n", n_cap);
+    if (const char * mode_env = std::getenv("PROBE_TOKENIZE_ONLY")) {
+        if (mode_env[0] == '1') {
+            std::string ids, detok;
+            for (int i = 0; i < n_cap; ++i) {
+                ids += std::to_string(static_cast<int>(prompt[(size_t) i]));
+                if (i + 1 < n_cap) ids += ",";
+                detok += piece(vocab, prompt[(size_t) i]);
+            }
+            std::printf("PROMPT_IDS=%s\n", ids.c_str());
+            std::printf("DETOK=");
+            for (char c : detok) {
+                if (c == '\n') std::fputs("\\n", stdout);
+                else std::fputc(c, stdout);
+            }
+            std::fputc('\n', stdout);
+            llama_free(ctx);
+            llama_model_free(model);
+            llama_backend_free();
+            return 0;
+        }
+    }
     std::printf("BOS_ID=%d\n", static_cast<int>(llama_vocab_bos(vocab)));
     std::printf("N_VOCAB=%d\n", n_vocab);
 
@@ -133,6 +165,17 @@ int main(int argc, char ** argv) {
     }
     const size_t logit_bytes = static_cast<size_t>(n_vocab) * sizeof(float);
     std::printf("LOGITS0_SHA256=%s\n", sha256_hex(logits, logit_bytes).c_str());
+    if (const char * p = std::getenv("PROBE_DUMP_LOGITS")) {
+        FILE * f = std::fopen(p, "wb");
+        if (f) { std::fwrite(logits, sizeof(float), (size_t) n_vocab, f); std::fclose(f); }
+    }
+    if (const char * p = std::getenv("PROBE_DUMP_HIDDEN")) {
+        const float * emb = llama_get_embeddings_ith(ctx, -1);
+        if (emb) {
+            FILE * f = std::fopen(p, "wb");
+            if (f) { std::fwrite(emb, sizeof(float), (size_t) llama_model_n_embd_inp(model), f); std::fclose(f); }
+        }
+    }
     std::printf("LOGITS0_FIRST4=%.9g %.9g %.9g %.9g\n",
                 static_cast<double>(logits[0]), static_cast<double>(logits[1]),
                 static_cast<double>(logits[2]), static_cast<double>(logits[3]));

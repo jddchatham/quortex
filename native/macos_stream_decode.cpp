@@ -252,9 +252,10 @@ int main(int argc, char ** argv) {
             ctx = ggml_init(ipl);
             if (!ctx) { std::puts("GGML_REINIT_FAIL"); return 1; }
             bool dbg0 = std::getenv("STREAM_DEBUG") && step == 0;
-            auto dumpf = [](const char * path, const float * d, size_t n) {
+            auto dumpf = [&](const char * path, const float * d, size_t n) {
                 if (const char * en = std::getenv("STREAM_DEBUG_DIR")) {
-                    std::string p = std::string(en) + "/" + path + ".f32";
+                    char full[128]; std::snprintf(full, sizeof full, "L%02d_%s", l, path);
+                    std::string p = std::string(en) + "/" + full + ".f32";
                     FILE * f = std::fopen(p.c_str(), "wb");
                     if (f) { std::fwrite(d, sizeof(float), n, f); std::fclose(f); }
                 }
