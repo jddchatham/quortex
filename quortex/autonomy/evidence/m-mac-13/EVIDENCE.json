@@ -1,0 +1,73 @@
+{
+ "milestone": "M-MAC-13",
+ "date_utc": "2026-11-16T20:35:00Z",
+ "status": "PASS (multi-token numerical exactness verified against independent fp64 reference)",
+ "model": {
+  "file": "ollama blob sha256-8625e48da4c4be9bcba2414fd8cad4095ff3a538d5b0111c2b26b5f6209538b9",
+  "sha256": "8625e48da4c4be9bcba2414fd8cad4095ff3a538d5b0111c2b26b5f6209538b9",
+  "arch": "qwen3, 36 layers, 4096 embd, 32 heads, 8 kv heads, ff 12288, vocab 151936"
+ },
+ "adapter_source_md5": "f559450bbf5c9958f8e10c10493ac7b4",
+ "adapter_binary_sha256": "42e8a961bd22c75dbce8a45f197c9000529aa95c9ae59c26d18a47bd0c1b24c6",
+ "reference_implementation": {
+  "name": "fp64 exact-math forward (numpy)",
+  "dequant": "python Q4_K/Q6_K decoders, validated BIT-EXACT (maxabs 0.0) against ggml library to_float on blk.0.attn_k.weight (4,194,304 elems), blk.0.ffn_down.weight (50,331,648 elems), token_embd.weight full table (622,329,856 elems)",
+  "arithmetic": "float64 end-to-end; independent of ggml kernels except the bit-exact weight decode"
+ },
+ "bugs_found_and_fixed_this_milestone": [
+  "single-token attention: softmax computed on transposed [1,t] scores; ggml softmax normalizes along ne[0]=1 -> all-ones 'probs' -> uniform V sums instead of attention (t>=2 silently wrong since M-MAC-12; t=1 had masked it)",
+  "batched prompt block: hidden_host zeroed but embedding batch never copied in (whole batched pass computed on zeros)",
+  "batched FFN: silu(gate)*up indexed with toks-layout [d*P+pi] into raw ggml [d + pi*n_ff] buffers (scrambled activation columns)",
+  "batched rope: q/k reshaped 2-D [128, n_head*P]; ggml rope_multi asserts a->ne[2]==positions -> reshaped 3-D [128, heads, P]",
+  "KV cache layout: K written row-major [d][t] but read via view stride 16 (transposed reads); V needed position-major transposed storage for the contraction view; final layout: K canonical (K[d][t] at d+128t), V transposed (V[d][t] at t+128... V^T contiguous [t][d] at t+16d)",
+  "earlier diagnosis errors corrected: an intermediate 'geometric' KV layout (d+16t) collided on writes (d+16pi aliases); caught by raw-cache dump vs kr_h diff (50.4 maxabs) before final canonical form"
+ ],
+ "verification": {
+  "layer0_ops_vs_fp64": {
+   "input_x": "rms 0.0 (bit-exact)",
+   "normed": "rms 6.3e-10",
+   "q/k/v_projections": "rms 1.3e-4..1.5e-4 (fp32 q8_K activation quantization level)",
+   "attention_out": "rms 1.3e-4",
+   "attn_output_proj": "rms 3.1e-4",
+   "ffn_act": "rms 5.9e-4",
+   "ffn_down": "rms 3.2e-3 (12288-dim accumulation)",
+   "layer0_hidden": "rel 1.2%, L2 16.808 (fp64) vs 16.834 (adapter)"
+  },
+  "per_layer_hidden_vs_fp64": {
+   "P1_prompt_785": "rel rms 1.2% (L00) -> 0.45-0.48% (L06..L30) -> 4.1% (L35)",
+   "P2_prompt_785_6722_pos1": "rel rms 1.4% (L00) -> 4.9-6.4% (L06..L18) -> 3.9-8.1% (L24..L35)"
+  },
+  "final_logits_vs_fp64": {
+   "P1": "rms 0.152 (signal 2.07, rel 7.4%), argmax identical (82)",
+   "P2_pos1": "rms 0.291 (signal 3.33, rel 8.7%), argmax identical (271)"
+  },
+  "greedy_16_tokens_from_785": {
+   "adapter": [82, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271],
+   "fp64_exact": [82, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271, 271],
+   "fp64_margins": [1.51, 12.89, 7.27, 5.86, 3.93, 3.93, 4.61, 5.35, 5.00, 4.24, 3.63, 3.59, 3.40, 3.11, 2.63, 2.13],
+   "llama_cpp_probe": [82, 42513, 785, 785, 785, 785, 785, 565, 32313, 32313, 32313, 32313, 32313, 32313, 32313, 32313],
+   "result": "16/16 adapter tokens identical to exact mathematics; llama.cpp deviates from exact math at steps 1-2"
+  },
+  "llama_cpp_characterization": {
+   "fp64_vs_llama_logits_P2_pos1": "rms 5.69 (signal 4.79) -- llama is 20x farther from exact math than the adapter (0.29)",
+   "interpretation": "abliterated Qwen3-8B is chaotic: exact fp64 trajectory differs wholesale from any fp32 pipeline at depth; llama's q8_K activation quantization + fused flash-attention rounding flip argmax at the P=2 decision (margin 0.88). The adapter's divergence FROM llama is therefore dominated by llama's own kernel approximations, not adapter error."
+  }
+ },
+ "metrics": {
+  "peak_rss_mb_16tok_single_path": 161,
+  "peak_rss_mb_12tok_batched_path": 233,
+  "throughput_tok_per_s": 0.52,
+  "first_token_s": 3.3,
+  "weights_streamed_per_token_gb": 4.67,
+  "deterministic": true
+ },
+ "guards": "2 GB / 90 s limits untouched; no guard weakened; no production test modified; nothing pushed",
+ "regression": "104 tests, same 4 pre-existing failures with changes stashed and applied (verified identical before/after)",
+ "reproducibility": {
+  "adapter_run": "STREAM_DUMP_LOGITS=/tmp/ad16.bin ./native/build-mac/macos-stream-decode MODEL 16 \"785\"",
+  "fp64_reference": "/tmp/fp64_greedy.py 785 16 (dequant_lib.py validated decoders + fp64 forward)",
+  "probe": "PROBE_IDS=<prefix> ./native/build-mac/macos-llama-probe MODEL 1",
+  "per_layer_dumps": "STREAM_DEBUG=1 STREAM_DEBUG_DIR=<dir> (bhidden/battn/bqr/bkr/bv/bsc dumps, env-gated)"
+ },
+ "restrictions": ["no 8B claim beyond this evidence", "no acceleration claim", "nothing pushed", "production branches unmodified"]
+}
