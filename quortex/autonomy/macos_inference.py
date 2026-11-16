@@ -67,6 +67,8 @@ ALLOWED = {
     "llama-session": ROOT / "native" / "build-mac" / "macos-llama-session",
     # M-MAC-08: QUORTEX FlashNext layer-0 (authentic Cortex recovery).
     "flashnext-layer0": ROOT / "native" / "build-mac" / "quortex-flashnext-layer0",
+    # M-MAC-12: native Qwen3 streaming decode adapter.
+    "stream-decode": ROOT / "native" / "build-mac" / "macos-stream-decode",
 }
 APPROVED_SHA256 = {
     # M-MAC-01 pinned build (clang-1700 arm64, ggml 0.25.3, Cortex e3a408e).
@@ -75,11 +77,13 @@ APPROVED_SHA256 = {
     "tensor-allocation": "0a89aebf9d86f3b57eb1a96aab6a9738c595df55d7eed65d94ab12649eb45099",
     "flashnext-op": "0eb75b386bb9a6fb0da4deb2f84745c5698a9b41a836372849227cea31fabcdd",
     # M-MAC-02 pinned probe (clang-1700 arm64, Cortex libllama 0.5.0-dev @ e3a408e).
-    "llama-probe": "3c16d3124759fae4d519c5a8d883df9d5f014c65fb91e4a60f862c9c75333e15",
+    "llama-probe": "285aac42e9e36a9f527c1685e167903991d957f763827254c392c4e8fc9645ef",
     # M-MAC-04 pinned session probe (Cortex libllama @ e3a408e, arm64 CPU).
     "llama-session": "a6c231f784748de799f79f3ab8616ffc10b9db12e79e4abc63699485086ab0e5",
     # M-MAC-08 pinned layer-0 (Cortex @ e3a408e + verbatim 4e8a5aa recovery).
     "flashnext-layer0": "ba8d973861c4e95ab0e39198075f2b230b190f12804dc3e3bdd19eef3a64d722",
+    # M-MAC-12 pinned streaming adapter (Cortex ggml @ e3a408e, arm64 CPU).
+    "stream-decode": "4cfe9bdfc30debaa73cf62075cd2aa5a6dfa1ae3f48152229e24d6813963573b",
 }
 
 DEFAULT_TIMEOUT = 60
@@ -100,6 +104,7 @@ ALLOWED_ENV = {
     # accept the supervisor-enforced memory cap in place of RLIMIT_AS.
     "QUORTEX_DARWIN_SUPERVISOR",
     "QUORTEX_DARWIN_RSS_CAP_MB",
+    "PROBE_TOKENIZE_ONLY",
 }
 
 
