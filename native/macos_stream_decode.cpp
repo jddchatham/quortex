@@ -310,6 +310,13 @@ int main(int argc, char ** argv) {
                           dumpf("q", q_h.data(), q_h.size()); dumpf("k", k_h.data(), k_h.size()); dumpf("v", v_h.data(), v_h.size()); }
 
             // q/k norm + rope from host snapshots
+            if (dbg0) {
+                const float * wk0 = m.norm_k.data() + (size_t) l * m.n_rot;
+                std::fprintf(stderr, "DBG knorm[0..5]: %.5f %.5f %.5f %.5f %.5f %.5f\n",
+                             wk0[0], wk0[1], wk0[2], wk0[3], wk0[4], wk0[5]);
+                double kl2 = 0; for (int i = 0; i < m.n_rot; ++i) kl2 += (double) wk0[i] * wk0[i];
+                std::fprintf(stderr, "DBG knorm L2=%.4f\n", std::sqrt(kl2));
+            }
             std::vector<float> qr_h(q_h.size()), kr_h(k_h.size());
             {
                 ggml_tensor * wq1 = make_f32(ctx, m.norm_q.data() + (size_t) l * m.n_rot, n_embd_head);
@@ -322,7 +329,16 @@ int main(int argc, char ** argv) {
                         ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 1), nullptr, m.n_rot, 2, m.n_ctx_orig, m.freq_base, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
                 ((int32_t *) qr_t->src[1]->data)[0] = pos;
                 ((int32_t *) kr_t->src[1]->data)[0] = pos;
+                if (dbg0) {
+                    const float * inq = (const float *) qr_t->src[0]->data;
+                    std::fprintf(stderr, "DBG rope pos_written=%d in_q[0..3]=%.5f %.5f %.5f %.5f\n",
+                                 ((int32_t *) qr_t->src[1]->data)[0], inq[0], inq[1], inq[2], inq[3]);
+                }
                 if (!compute(ctx, qr_t)) { std::puts("QR_COMPUTE_FAIL"); return 1; }
+                if (dbg0) {
+                    const float * outq = (const float *) qr_t->data;
+                    std::fprintf(stderr, "DBG qr_out[0..3]=%.5f %.5f %.5f %.5f\n", outq[0], outq[1], outq[2], outq[3]);
+                }
                 std::memcpy(qr_h.data(), qr_t->data, sizeof(float) * qr_h.size());
                 if (!compute(ctx, kr_t)) { std::puts("KR_COMPUTE_FAIL"); return 1; }
                 std::memcpy(kr_h.data(), kr_t->data, sizeof(float) * kr_h.size());
@@ -333,7 +349,7 @@ int main(int argc, char ** argv) {
                 float * kc = m.kv_k.data() + (((size_t) l * m.n_head_kv + kh) * n_embd_head * N_CTX_MAX);
                 float * vc = m.kv_v.data() + (((size_t) l * m.n_head_kv + kh) * n_embd_head * N_CTX_MAX);
                 for (int d = 0; d < n_embd_head; ++d) kc[(size_t) d * N_CTX_MAX + pos] = kr_h[(size_t) kh * n_embd_head + d];
-                for (int d = 0; d < n_embd_head; ++d) vc[(size_t) pos * n_embd_head + d] = v_h[(size_t) kh * n_embd_head + d];
+                for (int d = 0; d < n_embd_head; ++d) vc[(size_t) d * N_CTX_MAX + pos] = v_h[(size_t) kh * n_embd_head + d];
             }
             // attention per q-head column
             std::vector<float> attn((size_t) m.n_embd);
@@ -344,9 +360,20 @@ int main(int argc, char ** argv) {
                 ggml_tensor * k_base = ggml_new_tensor(ctx, GGML_TYPE_F32, 2, (int64_t[]){n_embd_head, N_CTX_MAX});
                 k_base->data = kc;
                 ggml_tensor * k_mat = ggml_view_2d(ctx, k_base, n_embd_head, t_all, N_CTX_MAX * sizeof(float), 0);
-                ggml_tensor * v_base = ggml_new_tensor(ctx, GGML_TYPE_F32, 2, (int64_t[]){N_CTX_MAX, n_embd_head});
+                ggml_tensor * v_base = ggml_new_tensor(ctx, GGML_TYPE_F32, 2, (int64_t[]){n_embd_head, N_CTX_MAX});
                 v_base->data = vc;
-                ggml_tensor * v_mat = ggml_view_2d(ctx, v_base, t_all, n_embd_head, n_embd_head * sizeof(float), 0);
+                ggml_tensor * v_mat = ggml_view_2d(ctx, v_base, n_embd_head, t_all, N_CTX_MAX * sizeof(float), 0);
+                if (t_all == 1) {
+                    // single position: attention output is exactly V (softmax
+                    // over one position == 1).  Also dodges a ggml edge case
+                    // where mul_mat with contraction dim ne0==1 miscomputes.
+                    for (int j = 0; j < group; ++j) {
+                        int head = kh * group + j;
+                        for (int d = 0; d < n_embd_head; ++d)
+                            attn[(size_t) head * n_embd_head + d] = v_h[(size_t) kh * n_embd_head + d];
+                    }
+                    continue;
+                }
                 for (int j = 0; j < group; ++j) {
                     int head = kh * group + j;
                     std::vector<float> qcol(n_embd_head);
@@ -354,7 +381,8 @@ int main(int argc, char ** argv) {
                     ggml_tensor * q_t = ggml_reshape_2d(ctx, make_f32(ctx, qcol.data(), n_embd_head), n_embd_head, 1);
                     ggml_tensor * scores = ggml_scale(ctx, ggml_mul_mat(ctx, k_mat, q_t), 1.0f / std::sqrt((float) n_embd_head));
                     ggml_tensor * probs = ggml_soft_max_ext(ctx, ggml_transpose(ctx, scores), nullptr, 1.0f, 0.0f);
-                    ggml_tensor * col = ggml_mul_mat(ctx, v_mat, ggml_transpose(ctx, probs));
+                    ggml_tensor * v_mat_T = ggml_view_2d(ctx, v_base, t_all, n_embd_head, N_CTX_MAX * sizeof(float), 0);
+                    ggml_tensor * col = ggml_mul_mat(ctx, v_mat_T, ggml_transpose(ctx, probs));
                     if (!compute(ctx, col)) { std::puts("ATTN_COMPUTE_FAIL"); return 1; }
                     for (int d = 0; d < n_embd_head; ++d) attn[(size_t) head * n_embd_head + d] = ((float *) col->data)[d];
                 }
@@ -448,7 +476,8 @@ int main(int argc, char ** argv) {
         gen_id = 0;
         for (int64_t i = 1; i < n_vocab; ++i) if (logits[(size_t) i] > logits[(size_t) gen_id]) gen_id = (int) i;
         if (const char * p = std::getenv("STREAM_DUMP_LOGITS")) {
-            if (step == 0) { FILE * f = std::fopen(p, "wb"); if (f) { std::fwrite(logits.data(), sizeof(float), (size_t) n_vocab, f); std::fclose(f); } }
+            char lp[512]; std::snprintf(lp, sizeof lp, "%s.step%d", p, step);
+            FILE * f = std::fopen(lp, "wb"); if (f) { std::fwrite(logits.data(), sizeof(float), (size_t) n_vocab, f); std::fclose(f); }
         }
         if (std::getenv("STREAM_DEBUG") && step == 0) {
             std::vector<std::pair<float,int64_t>> ix((size_t) n_vocab);
