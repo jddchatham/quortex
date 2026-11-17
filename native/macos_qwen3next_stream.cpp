@@ -50,6 +50,13 @@ struct Model {
 static struct ggml_context * g_ctx = nullptr;
 static ggml_backend_t g_backend = nullptr;
 
+#include <chrono>
+static double g_prof_load = 0, g_prof_compute = 0, g_prof_rd = 0, g_prof_dq = 0, g_prof_rec = 0, g_prof_attn = 0, g_prof_moe = 0, g_prof_head = 0;
+static bool g_prof = false;
+static struct ProfTimer { std::chrono::steady_clock::time_point t0; } g_pt;
+static void prof_tick() { g_pt.t0 = std::chrono::steady_clock::now(); }
+static double prof_tock() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - g_pt.t0).count(); }
+
 static bool gcompute(ggml_tensor * out) {
     ggml_cgraph * gf = ggml_new_graph(g_ctx);
     ggml_build_forward_expand(gf, out);
@@ -73,14 +80,17 @@ static bool matvec(const float * Wf, int64_t out, int64_t in, const float * x, s
     memcpy(w->data, Wf, out * in * 4);   // ggml [in, out]: element (i,o) at i + o*in == Wf[o*in + i] == W[o][i]
     ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(x, in), in, 1);
     ggml_tensor * r = ggml_mul_mat(g_ctx, w, xx);
+    double tload = prof_tock();
+    prof_tick();
     if (!gcompute(r)) return false;
+    double tc = prof_tock();
+    g_prof_load += tload; g_prof_compute += tc;
     memcpy(y.data(), r->data, out * 4);
     ctx_reset();
     return true;
 }
 
 static std::vector<uint8_t> g_stage;
-static std::vector<float> g_f32;
 // load tensor bytes and dequantize to f32 in [out,in] row-major (numpy) order
 static bool load_f32(Model & m, const char * name, std::vector<float> & out, bool outin = true) {
     int id = gguf_find_tensor(m.g, name);
@@ -91,26 +101,19 @@ static bool load_f32(Model & m, const char * name, std::vector<float> & out, boo
     for (int i = 0; i < GGML_MAX_DIMS && ne[i] > 0; ++i) { n *= ne[i]; dims++; }
     size_t nb = ggml_row_size(ty, ne[0]);
     for (int i = 1; i < dims; ++i) nb *= (size_t) ne[i];
+    prof_tick();
     g_stage.resize(nb);
     if (!m.rd(g_stage.data(), nb, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id)))) { fprintf(stderr, "RD_FAIL %s\n", name); return false; }
-    g_f32.resize(n);
+    g_prof_rd += prof_tock(); prof_tick();
+    out.resize(n);
     if (ty == GGML_TYPE_F32) {
-        memcpy(g_f32.data(), g_stage.data(), n * 4);
+        memcpy(out.data(), g_stage.data(), n * 4);
     } else {
         const ggml_type_traits * tr = ggml_get_type_traits(ty);
         if (!tr || !tr->to_float) { fprintf(stderr, "NO_TO_FLOAT %s type=%d\n", name, (int) ty); return false; }
-        tr->to_float(g_stage.data(), g_f32.data(), n);
+        tr->to_float(g_stage.data(), out.data(), n);
     }
-    if (dims >= 2 && outin) {
-        // ggml flat is ne0-fastest ([in,out]); matvec wants [out][in] numpy rows
-        int64_t d0 = ne[0], d1 = n / d0;
-        out.resize(n);
-        for (int64_t j = 0; j < d1; ++j)
-            for (int64_t i = 0; i < d0; ++i)
-                out[j * d0 + i] = g_f32[i + j * d0];
-    } else {
-        out = g_f32;
-    }
+    g_prof_dq += prof_tock(); prof_tick();
     return true;
 }
 
@@ -178,7 +181,7 @@ int main(int argc, char ** argv) {
     std::vector<char> is_rec(m.n_layer);
     std::vector<float> conv_state, ssm_state;   // per recr block: [conv_k-1, convdim] + [dtr, s_state, s_hv]
     std::vector<float> kv_k, kv_v;              // per attn block: [n_head_kv, HD, CTX]
-    const int CTX = 64;
+    const int CTX = 8192;
     int convdim = 0, n_rec = 0, n_attn = 0;
     for (int l = 0; l < m.n_layer; ++l) {
         char nm[64]; snprintf(nm, sizeof nm, "blk.%d.ssm_a", l);
@@ -262,6 +265,7 @@ int main(int argc, char ** argv) {
                 if (!matvec(ba.data(), 2 * m.s_dtr, E, normed.data(), qf)) return false;
                 if (getenv("Q3N_TRACE")) fprintf(stderr, "  L%d ba done\n", l);
                 // conv: state carry
+                prof_tick();
                 float * cst = conv_state.data() + (size_t) rec_slot * (m.conv_k - 1) * cd;
                 // window: [state(ck-1); current]
                 std::vector<float> conv_in((m.conv_k - 1) + 1);
@@ -352,6 +356,7 @@ int main(int argc, char ** argv) {
                 }
                 if (getenv("Q3N_TRACE0") && l == 0) fwrite(ssmout.data(), 4, ssmout.size(), fopen("/tmp/ad_ssmout0.f32", "wb"));
                 if (!matvec(ssmout.data(), E, vd, o.data(), cur)) return false;
+                g_prof_rec += prof_tock();
             } else {
                 // full gated attention
                 if (!LD("attn_q.weight", wq)) return false;    // [E, n_head*2*HD]
@@ -380,6 +385,7 @@ int main(int argc, char ** argv) {
                         v[i + m.n_rot / 2] = b * c + a * sn;
                     }
                 };
+                prof_tick();
                 std::vector<float> knr(HD);
                 for (int kh2 = 0; kh2 < NKV; ++kh2) {
                     float * krow = ka + (size_t) kh2 * HD * CTX;   // [i][t]
@@ -416,9 +422,11 @@ int main(int argc, char ** argv) {
                 }
                 if (!matvec(wo.data(), E, NH * HD, attnout.data(), cur)) return false;
                 attn_slot++;
+                g_prof_attn += prof_tock();
             }
             // residual
             for (int i = 0; i < E; ++i) hidden[i] += cur[i];
+            prof_tick();
             if (!LD("post_attention_norm.weight", wbuf, false)) return false;
             rms(hidden.data(), wbuf.data(), normed.data(), E);
             // MoE
@@ -465,14 +473,9 @@ int main(int argc, char ** argv) {
                     size_t base = m.data_off + gguf_get_tensor_offset(m.g, id) + (size_t) e * slice;
                     g_stage.resize(slice);
                     if (!m.rd(g_stage.data(), slice, (off_t) base)) return false;
-                    g_f32.resize(d0 * d1);
-                    ggml_get_type_traits(ty)->to_float(g_stage.data(), g_f32.data(), d0 * d1);
-                    // to numpy [d0][d1]
                     std::vector<float> & dst = (suf[4] == 'g' && suf[5] == 'a') ? wg : (suf[4] == 'u' ? wu : wd);
                     dst.resize(d0 * d1);
-                    for (int64_t b = 0; b < d1; ++b)
-                        for (int64_t a = 0; a < d0; ++a)
-                            dst[b * d0 + a] = g_f32[a + b * d0];
+                    ggml_get_type_traits(ty)->to_float(g_stage.data(), dst.data(), d0 * d1);
                 }
                 std::vector<float> g1(m.n_ff_exp), u1(m.n_ff_exp);
                 if (!matvec(wg.data(), m.n_ff_exp, E, normed.data(), g1)) return false;
@@ -499,6 +502,7 @@ int main(int argc, char ** argv) {
                 for (int j = 0; j < E; ++j) moe[j] += sgf * d1v[j];
             }
             for (int i = 0; i < E; ++i) hidden[i] += moe[i];
+            g_prof_moe += prof_tock();
             if (getenv("Q3N_DUMP_HIDDEN")) {
                 char hp[256]; snprintf(hp, sizeof hp, "%s/blk%02d.f32", getenv("Q3N_DUMP_HIDDEN"), l);
                 FILE * hf = fopen(hp, "wb");
@@ -506,6 +510,7 @@ int main(int argc, char ** argv) {
             }
         }
         // head
+        prof_tick();
         if (!load_f32(m, "output_norm.weight", wbuf, false)) return false;
         rms(hidden.data(), wbuf.data(), normed.data(), E);
         int oid = gguf_find_tensor(m.g, "output.weight");
@@ -519,20 +524,17 @@ int main(int argc, char ** argv) {
             size_t bytes = (size_t) rows * orow;
             g_stage.resize(bytes);
             if (!m.rd(g_stage.data(), bytes, (off_t)(obase + (size_t) base * orow))) return false;
-            g_f32.resize(rows * one[0]);
-            ggml_get_type_traits(oty)->to_float(g_stage.data(), g_f32.data(), rows * one[0]);
-            // numpy [rows][one0] then matvec
             std::vector<float> Wf(rows * one[0]);
-            for (int64_t b = 0; b < rows; ++b)
-                for (int64_t a = 0; a < one[0]; ++a)
-                    Wf[b * one[0] + a] = g_f32[a + b * one[0]];
+            ggml_get_type_traits(oty)->to_float(g_stage.data(), Wf.data(), rows * one[0]);
             std::vector<float> lg2;
             if (!matvec(Wf.data(), rows, one[0], normed.data(), lg2)) return false;
             memcpy(logits.data() + base, lg2.data(), (size_t) rows * 4);
         }
+        g_prof_head += prof_tock();
         return true;
     };
 
+    g_prof = getenv("Q3N_PROFILE") != nullptr;
     struct rusage ru0; getrusage(RUSAGE_SELF, &ru0);
     auto t0 = std::chrono::steady_clock::now();
     int gen = 0, fed = 0;
@@ -554,6 +556,11 @@ int main(int argc, char ** argv) {
     auto t1 = std::chrono::steady_clock::now();
     struct rusage ru1; getrusage(RUSAGE_SELF, &ru1);
     double wall = std::chrono::duration<double>(t1 - t0).count();
+    if (getenv("Q3N_PROFILE")) {
+        double tot = g_prof_load + g_prof_compute + g_prof_rec + g_prof_attn + g_prof_moe + g_prof_head;
+        fprintf(stderr, "Q3N_PROF rd=%.2fs dequant=%.2fs compute=%.2fs gdn=%.2fs attn=%.2fs moe=%.2fs head=%.2fs accounted=%.2f/%ddom\n",
+            g_prof_rd, g_prof_dq, g_prof_compute, g_prof_rec, g_prof_attn, g_prof_moe, g_prof_head, tot, n_gen);
+    }
     fprintf(stderr, "Q3N_PASS=1 gens=%d wall_s=%.2f tok_per_s=%.3f bytes_read=%lld peak_rss_kb=%ld\n",
         n_gen, wall, n_gen / wall, (long long) m.bytes_read, ru1.ru_maxrss / 1024);
     (void) fed;
