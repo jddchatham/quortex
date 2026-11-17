@@ -1,0 +1,49 @@
+{
+  "milestone": "M-MAC-19",
+  "date_utc": "2026-11-17",
+  "status": "PASS: hybrid zero-copy ACCEPTED (2.26 -> 2.90 tok/s warm, +28%; cold 0.98 -> 1.27; peak RSS 1.80 GB < 2 GB). Gate LRU REJECTED on measured evidence. Full zero-copy REJECTED on cap.",
+  "commit": "1a28be7",
+  "branch": "dev/macos-arm64-qwen3next",
+  "preserved": ["3525685", "85bb97d", "3229b17", "d97593e"],
+  "stage1_gate_lru": {
+    "flag": "Q3N_GATE_LRU (default OFF), Q3N_GATE_LRU_N slots",
+    "access_pattern_measurement_16tok": {
+      "prev_token_hit": "44.2%", "session_unbounded_hit": "58.5%",
+      "per_layer_lru_sim": {"2/layer": "0.3% (403 MB)", "4": "1.9% (806 MB)", "6": "5.9% (1.2 GB)", "8": "13.3% (1.6 GB)", "12": "40.5% (2.4 GB, over cap)", "16": "48.2% (3.2 GB)", "32": "56.1% (6.5 GB)"}
+    },
+    "verdict": "REJECTED: >=40% hit rate needs >=2.4 GB (> 2 GB cap); at cap-compatible sizes hit rate <=13%. fp32 slices (4.2 MB) have 8x expansion vs quant; macOS page cache already serves quant slices. Prototype validated functionally (tokens exact, fallback clean) but kept default-OFF."
+  },
+  "stage2_zero_copy": {
+    "flag": "Q3N_ZEROCOPY=1 full, =2 hybrid (default OFF = staging)",
+    "alignment_gate": "all 48k+ tensors verified 16-byte aligned at startup else disabled",
+    "full_mode": {"tok_per_s": 3.66, "peak_rss_gb": 7.1, "verdict": "REJECTED: per-token-varying expert pages accumulate in resident set -> RSS 7.1 GB >> 2 GB cap"},
+    "hybrid_mode": {"detail": "static weights read directly from MAP_SHARED mapping (ggml aliases file pages; no staging memcpy); expert slices and head staged via pread (bounded buffers)",
+      "warm_median_of_3": 2.897, "warm_runs": [2.897, 2.909, 2.896],
+      "cold_true_12gb_eviction": 1.266,
+      "peak_rss_gb": 1.80, "rss_cap": "PASS (< 2 GB, 10% headroom)",
+      "verdict": "ACCEPTED: +28% warm, +29% cold, token-exact"}
+  },
+  "numerical_regression": {
+    "preserved_streams_all_modes": {"9707_x4": [25, 198, 198, 40], "100000": 18493},
+    "hybrid_extended_prompts": {"100000,18493": "6/6 identical", "25": "6/6 identical", "614": "2/6 then diverges (known near-tie, unchanged)"},
+    "hybrid_16token": "identical to M-MAC-17/18 trajectory (15 + known step-15 flip)",
+    "bug_caught": "phase-A up-projection result pointer regression introduced during refactor; caught immediately by verified streams (gen=0 max=0); fixed (u1a result tensor)"
+  },
+  "guards": {
+    "rss_cap_2gb": "hybrid peak 1.80 GB (90%); full mode would violate -> rejected",
+    "timeout_90s": "hybrid 32-token prefill + 2 gen: 0.87 s, PASS=1",
+    "cold_regression": "none: cold improved 0.98 -> 1.27 tok/s",
+    "fallbacks": "flag unset = M-MAC-18 staging path (2.26 tok/s, RSS 632 MB) bit-identical; LRU miss/failure falls back to uncached phase A; zero-copy disabled on alignment/mmap failure",
+    "files": "no GGUF/download modified, moved, deleted; FlashNext download untouched throughout"
+  },
+  "memory_accounting": {
+    "hybrid_rss_1.80_gb_composition": "mapped static pages ~1.1 GB (same pages every token, bounded) + KV/ssm state 480 MB + staging buffers + ctx pool",
+    "lru_cost": "rejected config would add 0.4-2.4 GB for <=13% useful hits",
+    "note": "macOS ru_maxrss charges resident file-backed (MAP_SHARED) pages to the process; counted honestly against the cap in every measurement"
+  },
+  "go_nogo": {
+    "target": "sustained > 2.26 tok/s with RSS < 2 GB, bit-exact",
+    "verdict": "GO: 2.90 tok/s warm sustained at 1.80 GB, exact numerics",
+    "next_bottleneck": "dq4K_neon ~19% + gate fp32 vec_dot ~15% (fp32-exactness tax); further gains need expert-gate reformulation, not caching"
+  }
+}
