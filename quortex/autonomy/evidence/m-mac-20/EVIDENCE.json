@@ -1,0 +1,68 @@
+{
+  "milestone": "M-MAC-20 (PUNDY-003)",
+  "date_utc": "2026-11-17",
+  "status": "GO: first verified token produced from Qwen3.8-Flash-Next (qwen4exp, 98.42 GB) on the 16 GB M4 Mac Mini via the pinned llama.cpp oracle; deterministic repeat bit-exact; no safety gate breached",
+  "model": {
+    "file": "~/Downloads/Qwen3.8-Flash-Next-Uncensored.IQ4_XS.gguf",
+    "size_bytes": 98421788672,
+    "sha256": "a1975fd73542230e2b344d112f29f22ff522d051cb4bf33bdb872cb3ffc5dedf",
+    "architecture": "qwen4exp",
+    "tensors": 1224,
+    "hparams": {
+      "block_count": 48, "full_attention_interval": 4,
+      "embedding_length": 2560, "vocab": 248320,
+      "experts": "512 total, top-10 + 1 shared, expert FFN 640",
+      "gdn": "state 128, inner 6144, dt-rank 48, conv 4, groups 16 (36 GDN layers)",
+      "attention": "24 heads / 2 KV, head dim 256, QSA indexer top-2048 (12 full-attn layers)",
+      "hyper_connections": "4 streams, low-rank 320",
+      "quant_mix": "IQ4_XS/Q5_1/IQ4_NL/Q5_K/Q6_K/TQ2_0/F32"
+    }
+  },
+  "oracle": {
+    "library": "~/workspace/cortex-build-mac/bin/libllama.0.5.0.dylib (+ libggml 0.25.3), unchanged pinned Cortex build",
+    "harness": "native/macos_llama_probe_nr.cpp -> native/build-mac/macos-llama-probe-nr",
+    "deviations_from_stock_probe_and_why": [
+      "use_extra_bufts=false: stock loader weight-repack copies repack-eligible tensors (~30 GB incl. every ffn_down_exps slice) into anonymous RAM; the process is kernel-killed during load at ~blk.40 (measured peak RSS 8.25 GB, real 57.9 s, 2026-11-17). With extra bufts disabled all tensors stay in the mmap-backed CPU buffer: bounded RSS, verified working.",
+      "embeddings=false: cparams.embeddings=true makes this pinned qwen4exp graph mark every input position as output and then read its output tensor out of bounds (GGML_ASSERT ggml-backend.cpp:423 'tensor read out of bounds', SIGABRT). Last-position logits are all Stage 1 needs; standard single-output decode path verified working."
+    ],
+    "determinism_contract": "fixed prompt 'The capital of France is' (5 tokens incl BOS), greedy argmax, no RNG; repeat runs must reproduce every printed field bit-for-bit"
+  },
+  "safety": {
+    "gates_at_launch": "16 GB RAM; memory 85-91% free; swap 0 used (post-reboot); 22 GiB disk free",
+    "watchdog_thresholds": ["probe RSS > 10 GB -> kill", "system memory free < 10% -> kill", "swap used > 1600 MB -> kill", "runtime > 900 s -> kill"],
+    "observed": "no threshold approached; swap stayed 0; memory pressure 85-91% free throughout",
+    "watchdog_defect_disclosure": "watchdog samples in watchdog.log targeted a wrapper subshell (run 1-2) and then used an awk match on the full 20-char process name that macOS truncates to 15 chars (run 3); per-process RSS samples in watchdog.log are therefore invalid. Authoritative per-process numbers come from /usr/bin/time -l on both runs. System-level gates (free %, swap) were armed and did not trigger. Defect documented; fixed targeting belongs to the next harness revision.",
+    "restrictions_honored": "one token only (run 3 is a repeat of the same single-token run for determinism, not multi-token generation); no model file modified; no QUORTEX engine change; no guard weakened; no Git mutation until this evidence existed"
+  },
+  "results": {
+    "run2_cold_pagecache": {
+      "wall_s": 12.07, "user_s": 2.92, "sys_s": 3.73,
+      "peak_rss_bytes": 7255588864, "page_faults": 484532, "page_reclaims": 128428,
+      "prompt_tokens": 5, "bos_id": 248044, "n_vocab": 248320,
+      "logits0_sha256": "e8effaaba61fb2cf42e3fc05c615e749b5205143d7f7047bad6202c7e70f7650",
+      "logits0_first4": [6.33340311, 4.54787254, 2.25123787, 2.31205535],
+      "gen0_id": 11751,
+      "gen0_piece": " Paris",
+      "logits_dump": "logits0.f32 (993280 bytes = 248320 x fp32, sha256 equals logits0_sha256 above)"
+    },
+    "run3_warm_pagecache_determinism_repeat": {
+      "wall_s": 2.87, "user_s": 2.57, "sys_s": 1.47,
+      "peak_rss_bytes": 7360741376, "page_faults": 72357,
+      "logits0_sha256": "e8effaaba61fb2cf42e3fc05c615e749b5205143d7f7047bad6202c7e70f7650",
+      "gen0_id": 11751,
+      "gen0_piece": " Paris"
+    },
+    "determinism": "BIT-EXACT: identical logits SHA-256, identical first-4 floats, identical token across cold and warm runs"
+  },
+  "first_token": { "id": 11751, "piece": " Paris", "prompt": "The capital of France is" },
+  "artifacts": {
+    "logits0_f32": "raw fp32 logit vector preserved for future QUORTEX engine comparisons",
+    "logits0_run3_f32": "independent repeat, sha256-identical to logits0.f32",
+    "probe_logs": "probe.log / probe_run3.log / time.log / time_run3.log / watchdog.log (gitignored by repo policy; numbers transcribed here)"
+  },
+  "go_nogo": {
+    "verdict": "GO",
+    "basis": "all safety gates passed; first token produced and reproduced bit-exactly; bounded memory (peak ~7.3 GB RSS, mmap-backed, no swap) far under limits",
+    "next": "Stage 2: multi-token trajectories and qwen4exp engine port, verified per-layer against this oracle; watchdog targeting fix"
+  }
+}
