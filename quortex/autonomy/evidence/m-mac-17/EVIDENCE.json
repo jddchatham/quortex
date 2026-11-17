@@ -1,0 +1,68 @@
+{
+  "milestone": "M-MAC-17",
+  "date_utc": "2026-11-17",
+  "status": "PASS: 0.433 -> 1.60 tok/s sustained (3.7x) with verified streams token-exact; 2 tok/s target NOT reached (80%); guards preserved",
+  "commit": "689ee8a",
+  "branch": "dev/macos-arm64-qwen3next",
+  "model": "~/Downloads/Huihui-Qwen3-Coder-Next-abliterated.Q4_K_M.gguf (sha256 14607f1f..., read-only, unmodified)",
+  "optimizations": [
+    "quant-native matvec for GDN (attn_qkv, attn_gate, ssm_out), attention (q/k/v/o), router, shared expert, head, expert up/down: staged K-quant bytes aliased into ggml tensor, mul_mat quantizes x to q8_K internally",
+    "expert gate projection kept fp32-dequant: bisected — q8_K x-quant on gate flips preserved streams (gen 97639 vs 18493); up/down quant pass",
+    "MoE batched into 2 graphs per layer: phase A = all 10 gate (fp32) + up (quant) projections in one compute, phase B = all 10 down projections in one compute",
+    "persistent 6-thread ggml threadpool (was: new threadpool per graph compute)",
+    "block-wise embedding decode (256-element blocks) from M-MAC-16 retained"
+  ],
+  "performance": {
+    "baseline_mmac16_tok_per_s": 0.433,
+    "mmac17_sustained_12tok_median_of_3": 1.604,
+    "mmac17_short_run_best": 1.87,
+    "mmac17_cold_cache": 1.347,
+    "speedup_sustained": "3.7x",
+    "peak_rss_mb": 574,
+    "baseline_peak_rss_mb_ctx8192": 862,
+    "bytes_read_per_token_gb": 2.41,
+    "note": "bytes_read unchanged: streaming floor identical; optimization removed dequant/memmove/graph-churn, not bytes"
+  },
+  "numerical_regression": {
+    "preserved_streams": {
+      "9707_x4": {"expected": [25, 198, 198, 40], "actual": [25, 198, 198, 40], "result": "EXACT, bit-stable max logits across runs (15.8909 at step 3)"},
+      "100000": {"expected": 18493, "actual": 18493, "result": "EXACT (max logit 8.5328, fp32 ref 8.3573, +2.1% relative, argmax stable)"}
+    },
+    "extended_16token_vs_fp32_adapter": {
+      "identical_prefix_tokens": 15,
+      "divergence": "step 15: fp32 gen=1043 vs quant gen=67; top-2 gap at flip point ~ quant drift scale",
+      "max_logit_delta_range": [0.03, 0.38]
+    },
+    "additional_prompts_6token": {
+      "100000,18493": {"agreement": "6/6 identical"},
+      "25": {"agreement": "6/6 identical"},
+      "614": {"agreement": "2/6 then diverges (expected argmax-flip behavior)"}
+    },
+    "tolerance_statement": "quant path documented tolerance ~0.3-2.4% relative on max logits; argmax preserved on all preserved/verified streams; long free-running trajectories may flip when top-2 logit gap is below accumulated drift"
+  },
+  "guards": {
+    "rss_cap_2gb": "peak 574 MB (28% of cap)",
+    "timeout_90s": "32-token prefill + 2 gen bounded test: 1.87 s wall (was 85.43 s in M-MAC-16), PASS",
+    "gguf_files": "no model files modified, moved, or deleted; no downloads"
+  },
+  "profile_after": {
+    "method": "macOS sample(1) 3s during 16-token run",
+    "top_active": ["pread ~33% of active samples", "dequantize_row_q4_K (expert gate fp32) ~27%", "vec_dot fp32+quant ~20%", "ggml ctx/graph churn ~5%"],
+    "threadpool_idle": "6 workers parked in __psynch_cvwait (expected)"
+  },
+  "remaining_levers_to_2tok": [
+    "overlap weight pread with compute via prefetch thread (static weights only; expert selection is dynamic)",
+    "bit-exact NEON Q4_K dequant for the fp32 expert-gate path",
+    "batched graphs for GDN/attention/shared-expert projections (fewer ctx_resets)"
+  ],
+  "target_assessment": {
+    "tok_per_s_target": 2.0,
+    "achieved_sustained": 1.604,
+    "achieved_best": 1.87,
+    "verdict": "NOT claimed; measured 80% of target sustained. Path documented."
+  },
+  "go_nogo": {
+    "endpoint_ready": "sustained 1.6 tok/s, bounded memory 574 MB, guards green",
+    "recommendation": "acceptable for guarded local endpoint experiments; revisit overlap for interactive use"
+  }
+}
