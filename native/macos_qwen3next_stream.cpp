@@ -217,7 +217,7 @@ int main(int argc, char ** argv) {
     std::vector<float> logits(m.n_vocab);
     std::vector<float> wbuf, xbuf, router, wg, wu, wd, wq, wk, wv, wo;
     std::vector<float> qf, kf, vf, ba, gate, beta, a_qkv, a_gate, ssmout, convw, dtb, sa, ssnorm;
-    int64_t pos_rec = 0, pos_attn = 0;
+    int rec_slot = 0, attn_slot = 0;
 
     auto rms = [&](const float * x, const float * w, float * y, int n) {
         double s = 0; for (int i = 0; i < n; ++i) s += (double) x[i] * x[i];
@@ -227,7 +227,9 @@ int main(int argc, char ** argv) {
     auto sigmoid = [](float x) { return 1.0f / (1.0f + expf(-x)); };
 
     auto forward = [&](int tok, int pos) -> bool {
+        rec_slot = 0; attn_slot = 0;
         emb_row(tok, hidden.data());
+        if (getenv("Q3N_TRACE0") && pos == 0) fwrite(hidden.data(), 4, E, fopen("/tmp/ad_emb0.f32", "wb"));
         for (int l = 0; l < m.n_layer; ++l) {
             if (getenv("Q3N_TRACE")) fprintf(stderr, "L%d %s\n", l, is_rec[l] ? "rec" : "attn");
             char nm[128];
@@ -240,6 +242,9 @@ int main(int argc, char ** argv) {
             if (is_rec[l]) {
                 const int kd = m.s_state * m.s_group, vd = m.s_inner, cd = 2 * kd + vd;
                 if (getenv("Q3N_TRACE")) fprintf(stderr, "  L%d load qkv\n", l);
+                if (getenv("Q3N_TRACE0") && l == 0) {
+                    fwrite(normed.data(), 4, E, fopen("/tmp/ad_normed0.f32", "wb"));
+                }
                 if (!LD("attn_qkv.weight", a_qkv)) return false;       // [E, cd] outin -> [E][cd]
                 if (getenv("Q3N_TRACE")) fprintf(stderr, "  L%d qkv loaded, matvec\n", l);
                 if (!LD("attn_gate.weight", a_gate)) return false;     // [E, vd]
@@ -257,7 +262,7 @@ int main(int argc, char ** argv) {
                 if (!matvec(ba.data(), 2 * m.s_dtr, E, normed.data(), qf)) return false;
                 if (getenv("Q3N_TRACE")) fprintf(stderr, "  L%d ba done\n", l);
                 // conv: state carry
-                float * cst = conv_state.data() + (size_t) pos_rec * (m.conv_k - 1) * cd;
+                float * cst = conv_state.data() + (size_t) rec_slot * (m.conv_k - 1) * cd;
                 // window: [state(ck-1); current]
                 std::vector<float> conv_in((m.conv_k - 1) + 1);
                 std::vector<float> convout(cd);
@@ -270,6 +275,10 @@ int main(int argc, char ** argv) {
                 // shift state
                 memmove(cst, cst + cd, (size_t)(m.conv_k - 2) * cd * 4);
                 memcpy(cst + (size_t)(m.conv_k - 2) * cd, tmp1.data(), (size_t) cd * 4);
+                if (getenv("Q3N_TRACE0") && l == 0) {
+                    fwrite(tmp1.data(), 4, cd, fopen("/tmp/ad_qkv0.f32", "wb"));
+                    fwrite(convout.data(), 4, cd, fopen("/tmp/ad_conv0.f32", "wb"));
+                }
                 // split + L2 norm q,k (per head over s_state)
                 const int SS = m.s_state, SG = m.s_group, DTR = m.s_dtr, HV = m.s_hv;
                 // convout channels: [q kd | k kd | v vd], head-minor within each
@@ -286,7 +295,8 @@ int main(int argc, char ** argv) {
                 l2(convout.data() + kd, SG, SS, kk.data());
                 memcpy(vv.data(), convout.data() + 2 * kd, (size_t) vd * 4);
                 // beta/alpha per v-head
-                float * S = ssm_state.data() + (size_t) pos_rec * DTR * SS * HV;
+                std::vector<float> dbg_b(DTR), dbg_g(DTR);
+                float * S = ssm_state.data() + (size_t) rec_slot * DTR * SS * HV;
                 const float scale = 1.0f / sqrtf((float) SS);
                 std::vector<float> o((size_t) vd, 0.0f);
                 for (int h = 0; h < DTR; ++h) {
@@ -297,6 +307,7 @@ int main(int argc, char ** argv) {
                     float b = sigmoid(qf[h]);
                     float al = logf(1.0f + expf(qf[DTR + h] + dtb[h]));
                     float gg2 = al * sa[h];
+                    dbg_b[h] = b; dbg_g[h] = gg2;
                     float * Sh = S + (size_t) h * SS * HV;   // [SS i][HV j]
                     float dec = expf(gg2);
                     std::vector<float> u(HV);
@@ -314,7 +325,16 @@ int main(int argc, char ** argv) {
                         o[(size_t) h * HV + j] = s * scale;
                     }
                 }
-                pos_rec++;
+                if (getenv("Q3N_TRACE0") && l == 0) {
+                    fwrite(o.data(), 4, vd, fopen("/tmp/ad_oraw0.f32", "wb"));
+                    fwrite(tmp2.data(), 4, vd, fopen("/tmp/ad_z0.f32", "wb"));
+                    fwrite(qq.data(), 4, kd, fopen("/tmp/ad_ql2.f32", "wb"));
+                    fwrite(kk.data(), 4, kd, fopen("/tmp/ad_kl2.f32", "wb"));
+                    fwrite(vv.data(), 4, vd, fopen("/tmp/ad_v.f32", "wb"));
+                    fwrite(dbg_b.data(), 4, DTR, fopen("/tmp/ad_beta.f32", "wb"));
+                    fwrite(dbg_g.data(), 4, DTR, fopen("/tmp/ad_gate.f32", "wb"));
+                }
+                rec_slot++;
                 if (getenv("Q3N_TRACE")) fprintf(stderr, "  L%d gdn done\n", l);
                 // gated norm: rms(o per HV) * ssnorm, then * silu(z); z channels (i + h*HV)
                 for (int h = 0; h < DTR; ++h) {
@@ -326,6 +346,11 @@ int main(int argc, char ** argv) {
                         o[(size_t) h * HV + i] = o[(size_t) h * HV + i] * inv * ssnorm[i] * (zz / (1.0f + expf(-zz)));
                     }
                 }
+                if (getenv("Q3N_TRACE0") && l == 0) {
+                    fwrite(o.data(), 4, vd, fopen("/tmp/ad_o0.f32", "wb"));
+                    fwrite(cur.data(), 4, E, fopen("/tmp/ad_fo0.f32", "wb"));
+                }
+                if (getenv("Q3N_TRACE0") && l == 0) fwrite(ssmout.data(), 4, ssmout.size(), fopen("/tmp/ad_ssmout0.f32", "wb"));
                 if (!matvec(ssmout.data(), E, vd, o.data(), cur)) return false;
             } else {
                 // full gated attention
@@ -342,8 +367,8 @@ int main(int argc, char ** argv) {
                 if (!matvec(wq.data(), NH * 2 * HD, E, normed.data(), qfull)) return false;
                 if (!matvec(wk.data(), NKV * HD, E, normed.data(), kf2)) return false;
                 if (!matvec(wv.data(), NKV * HD, E, normed.data(), vf2)) return false;
-                float * ka = kv_k.data() + (size_t) pos_attn * NKV * HD * CTX;
-                float * va = kv_v.data() + (size_t) pos_attn * NKV * HD * CTX;
+                float * ka = kv_k.data() + (size_t) attn_slot * NKV * HD * CTX;
+                float * va = kv_v.data() + (size_t) attn_slot * NKV * HD * CTX;
                 // per kv-head: norm k, partial rope on q/k, store k/v
                 auto rope = [&](float * v, int pos2) {
                     for (int i = 0; i < m.n_rot / 2; ++i) {
@@ -390,7 +415,7 @@ int main(int argc, char ** argv) {
                     }
                 }
                 if (!matvec(wo.data(), E, NH * HD, attnout.data(), cur)) return false;
-                pos_attn++;
+                attn_slot++;
             }
             // residual
             for (int i = 0; i < E; ++i) hidden[i] += cur[i];
@@ -401,13 +426,24 @@ int main(int argc, char ** argv) {
             std::vector<float> rl(m.n_exp);
             for (int e = 0; e < m.n_exp; ++e) {
                 double s = 0;
-                for (int i = 0; i < E; ++i) s += (double) router[(size_t) i * m.n_exp + e] * normed[i];
+                for (int i = 0; i < E; ++i) s += (double) router[(size_t) e * E + i] * normed[i];   // router loaded [out][in]
                 rl[e] = (float) s;
             }
             std::vector<int> sel(m.n_used);
             { std::vector<int> idx(m.n_exp); for (int i = 0; i < m.n_exp; ++i) idx[i] = i;
               std::partial_sort(idx.begin(), idx.begin() + m.n_used, idx.end(), [&](int a, int b){ return rl[a] > rl[b]; });
               for (int i = 0; i < m.n_used; ++i) sel[i] = idx[i]; }
+            if (getenv("Q3N_TRACE0") && l == 0) {
+                fprintf(stderr, "Q3N selected experts:");
+                for (int i2 = 0; i2 < m.n_used; ++i2) fprintf(stderr, " %d", sel[i2]);
+                fprintf(stderr, "\n");
+            }
+            if (getenv("Q3N_TRACE0") && l == 0) {
+                fwrite(normed.data(), 4, E, fopen("/tmp/ad_fnorm0.f32", "wb"));
+                fprintf(stderr, "Q3N router logits[:8]:");
+                for (int i2 = 0; i2 < 8; ++i2) fprintf(stderr, " %.4f", rl[i2]);
+                fprintf(stderr, "\n");
+            }
             double mx = -1e30; for (float v : rl) mx = std::max(mx, (double) v);
             double dsum = 0; std::vector<double> pr(m.n_exp);
             for (int e = 0; e < m.n_exp; ++e) { pr[e] = exp((double) rl[e] - mx); dsum += pr[e]; }
@@ -463,6 +499,11 @@ int main(int argc, char ** argv) {
                 for (int j = 0; j < E; ++j) moe[j] += sgf * d1v[j];
             }
             for (int i = 0; i < E; ++i) hidden[i] += moe[i];
+            if (getenv("Q3N_DUMP_HIDDEN")) {
+                char hp[256]; snprintf(hp, sizeof hp, "%s/blk%02d.f32", getenv("Q3N_DUMP_HIDDEN"), l);
+                FILE * hf = fopen(hp, "wb");
+                if (hf) { fwrite(hidden.data(), 4, E, hf); fclose(hf); }
+            }
         }
         // head
         if (!load_f32(m, "output_norm.weight", wbuf, false)) return false;
