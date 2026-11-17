@@ -1,0 +1,20 @@
+{
+ "milestone": "M-MAC-16",
+ "date_utc": "2026-11-17T04:00:00Z",
+ "status": "PASS: throughput +54%, context 64->8192, guards preserved, token-exact numerics unchanged",
+ "before_after_2token_prompt_9707": {
+  "M-MAC-15": {"wall_s": 7.09, "tok_per_s_warm": 0.282, "peak_rss_mb": 540, "tokens": [25, 198]},
+  "M-MAC-16": {"wall_s": 4.62, "tok_per_s_warm": 0.433, "tok_per_s_cold": 0.330, "peak_rss_mb_ctx64": 472, "peak_rss_mb_ctx8192": 862, "tokens": [25, 198], "bytes_read_2tok_gb": 4.82}
+ },
+ "profile_2tok": {"pread_s": 0.20, "dequant_s": 0.75, "compute_s": 0.55, "gdn_host_s": 0.06, "attn_host_s": 0.02, "moe_host_s": 0.01, "wall_s": 4.62},
+ "context": {
+  "ctx_constant": 8192,
+  "bounded_32tok_prefill_2gen": {"wall_s": 85.43, "guard_90s": "PASS", "peak_rss_mb": 867, "result": "PASS=1"}
+ },
+ "numerical": {
+  "quortex_vs_llama": "token-exact preserved: [9707]->[25,198], [100000]->18493",
+  "fp64_reference": "improved (58327->23026; blk0 rel 100%+->40%); one expert-path discrepancy remains (documented)"
+ },
+ "guards": {"rss_cap_2gb": "peak 862MB (43%)", "timeout_90s": "worst bounded run 85.4s"},
+ "go_nogo": {"verification_endpoint": "GO", "interactive_endpoint": "NO-GO"}
+}
