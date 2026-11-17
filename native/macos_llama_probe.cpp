@@ -72,8 +72,8 @@ int main(int argc, char ** argv) {
         return 2;
     }
     const int n_gen = argc > 2 ? std::atoi(argv[2]) : 1;
-    if (n_gen < 1 || n_gen > 8) {
-        std::fprintf(stderr, "N_TOKENS must be between 1 and 8\n");
+    if (n_gen < 1 || n_gen > 64) {
+        std::fprintf(stderr, "N_TOKENS must be between 1 and 64\n");
         return 2;
     }
 

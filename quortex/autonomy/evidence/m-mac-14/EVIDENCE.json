@@ -1,0 +1,73 @@
+{
+ "milestone": "M-MAC-14",
+ "date_utc": "2026-11-16T22:10:00Z",
+ "status": "COMPLETE (independent validation + performance; GO as verification engine, NO-GO as interactive server)",
+ "continues_from": "dbbbc85 (M-MAC-13)",
+ "changes_this_milestone": [
+  "N_CTX_MAX 16->40 in macos_stream_decode.cpp (value-neutral: 16-token SHA-identical re-run proven)",
+  "probe generation cap 8->64 in macos_llama_probe.cpp (instrumentation only; GEN0 semantics unchanged, verified 315 on [785,6722])"
+ ],
+ "binaries_sha256": {
+  "macos-stream-decode": "932a6e559e4e7d1ac020b6968b3a47271d2252e3ccb7d5e7a370f2df6d4f16c2",
+  "macos-llama-probe": "c7dba3a20bdd0b2c1189e3642417f7a7a3d31e5085385f67ee2b472d14c82dea"
+ },
+ "reproduction": {
+  "adapter_16tok_prompt785": "bit-identical step SHAs vs M-MAC-13 (step0 4ddeacc92035...)",
+  "fp64_greedy_16_prompt785": "identical trajectory [82,271x15] and margins (step15=2.1344)",
+  "n_ctx_change_neutral": "identical SHAs after 16->40"
+ },
+ "fp64_independence_audit": {
+  "rope_basis_pos1": "cos(1)=0.54030231 sin(1)=0.84147098 exact",
+  "attention_vs_hand_rolled": "maxdiff 4.4e-16; causal masking exact at p=0/2/4",
+  "rmsnorm_vs_hand_rolled": "3.6e-15",
+  "wrong_indexing_signature": "correlation 0.0123 (uncorrelated)",
+  "structural": "no shared code with adapter; no KV cache state; weights bit-exact vs ggml to_float (676M elems, 0.0 maxabs)"
+ },
+ "breadth_campaign": {
+  "prompts": 12,
+  "gens_per_prompt": 32,
+  "prefill_tokens": "1..8 (multi-token prefill included)",
+  "quortex_vs_fp64_agreement": "365/384 = 95.1%",
+  "per_prompt": [32,32,32,27,31,31,30,32,23,32,31,32],
+  "quortex_vs_llama_raw_agreement": "19/384 = 4.9%",
+  "all_disagreements_margin_lt": 1.6,
+  "margin_bands": [
+   {"band": "[0.0,0.2)", "n": 7, "agree": 3, "rms": 0.512},
+   {"band": "[0.2,0.5)", "n": 21, "agree": 15, "rms": 0.771},
+   {"band": "[0.5,1.0)", "n": 34, "agree": 28, "rms": 0.881},
+   {"band": "[1.0,2.0)", "n": 90, "agree": 87, "rms": 0.725},
+   {"band": "[2.0,5.0)", "n": 156, "agree": 156, "rms": 0.704},
+   {"band": "[5.0,inf)", "n": 76, "agree": 76, "rms": 1.014}
+  ],
+  "rms_vs_fp64": "median 0.559, p90 1.419, max 4.795 (margin-independent => chaotic sensitivity, not bias)"
+ },
+ "performance": {
+  "method": "adapter counters + /usr/bin/time -l; prompt [785,6722,315], 4 gens",
+  "warm_a": {"first_token_s": 4.70, "tok_per_s": 0.412, "peak_rss_mb": 228, "page_faults": 106},
+  "cold_after_12gb_eviction": {"first_token_s": 3.71, "tok_per_s": 0.461, "peak_rss_mb": 228, "page_faults": 10},
+  "warm_b": {"first_token_s": 3.20, "tok_per_s": 0.488, "peak_rss_mb": 226, "page_faults": 10},
+  "campaign_12x32tok": {"first_token_s": [3.59,4.33], "tok_per_s": [0.309,0.60], "peak_rss_mb": [238,248], "bytes_read_per_run_gb": 149.5},
+  "context_scaling": {"prefill_1": {"first_s": 1.63, "tok_s": 0.595, "rss_mb": 164}, "prefill_4": {"first_s": 3.31, "tok_s": 0.527, "rss_mb": 241}, "prefill_8": {"first_s": 3.57, "tok_s": 0.516, "rss_mb": 247}},
+  "finding": "warm~=cold (5GB working set re-streamed every token defeats page cache); bytes deterministic"
+ },
+ "stability": {
+  "repeated_sessions": "3x identical aggregate SHA 153ed4af0777 (bit-deterministic)",
+  "kv_growth_32tok_contexts": "RSS 238-248MB flat, all PASS=1",
+  "guard_compliance": "all runs <90s (worst ~66s); RSS <=248MB (12% of 2GB cap)"
+ },
+ "openhands_path": {
+  "recommended": "Path A: Ollama keeps serving; QUORTEX adapter+probe+fp64 teacher as verification/attestation layer (all tools exercised this milestone)",
+  "not_safe_today": "Path B (direct OpenAI endpoint): 0.4-0.6 tok/s, N_CTX_MAX=40, greedy-only, no streaming semantics",
+  "path_to_serving_go": "overlapped weight I/O or residency for >=5 tok/s; context raise (KV cost negligible); sampling support"
+ },
+ "go_nogo": {
+  "interactive_server": "NO-GO",
+  "verification_engine": "GO"
+ },
+ "guards": "2GB/90s untouched; regression 104 tests identical (4 pre-existing failures); nothing pushed; production unmodified",
+ "data_files": {
+  "margins_csv": "/tmp/teacher_margins.csv (384 rows)",
+  "adapter_vs_llama": "/tmp/ad_vs_llama.json",
+  "adapter_dumps": "/tmp/ad14_<i>.bin.step<k> (12 prompts x 32 steps)"
+ }
+}

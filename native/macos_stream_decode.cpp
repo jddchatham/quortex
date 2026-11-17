@@ -38,7 +38,7 @@ ggml_backend_buffer_type_t ggml_backend_cpu_repack_buffer_type(void);
 
 namespace {
 
-constexpr int N_CTX_MAX = 16;
+constexpr int N_CTX_MAX = 40;
 
 struct Model {
     int fd = -1;
