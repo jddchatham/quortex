@@ -24,6 +24,8 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <list>
+#include <unordered_map>
 #include <arm_neon.h>
 
 static bool pread_full(int fd, void * dst, size_t n, off_t off) {
@@ -40,6 +42,9 @@ struct Model {
     int fd = -1;
     gguf_context * g = nullptr;
     size_t data_off = 0;
+    const uint8_t * map = nullptr;           // M-MAC-19 zero-copy for STATIC weights (Q3N_ZEROCOPY=1|2)
+    const uint8_t * map_exp = nullptr;       // zero-copy for expert slices too (Q3N_ZEROCOPY=1 full only)
+    inline const uint8_t * at(size_t off) const { return map + off; }
     // hparams
     int n_layer = 48, n_embd = 2048, n_vocab = 151936;
     int n_head = 16, n_head_kv = 2, n_hdim = 256, n_rot = 64;
@@ -116,52 +121,6 @@ static std::vector<uint8_t> g_stage2;
 static std::vector<uint8_t> g_stage3;
 static std::vector<uint8_t> g_stage4;
 
-// M-MAC-18 bounded prefetch: kernel-driven readahead of the NEXT layer's static
-// weights via madvise(MADV_WILLNEED). No worker threads; the mapping is never
-// dereferenced (no RSS); page-cache growth is bounded by the per-layer window.
-static bool g_prefetch = false;
-static char * g_map = nullptr;
-static std::vector<std::pair<size_t, size_t>> g_layer_range;
-
-// Quant-native matvec: staged quant bytes -> typed ggml tensor (aliased) -> mul_mat.
-static bool qmatvec(Model & m, const char * name, int64_t out, int64_t in, const float * x, std::vector<float> & y) {
-    int id = gguf_find_tensor(m.g, name);
-    if (id < 0) { fprintf(stderr, "NO_TENSOR %s\n", name); return false; }
-    const int64_t * ne = gguf_get_tensor_ne(m.g, id);
-    enum ggml_type ty = gguf_get_tensor_type(m.g, id);
-    size_t nb = ggml_row_size(ty, ne[0]);
-    for (int i = 1; i < GGML_MAX_DIMS && ne[i] > 0; ++i) nb *= (size_t) ne[i];
-    if (ne[0] != in || ne[1] != out) { fprintf(stderr, "SHAPE %s\n", name); return false; }
-    if (g_stage.size() < nb) g_stage.resize(nb);
-    if (!m.rd(g_stage.data(), nb, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id)))) { fprintf(stderr, "RD_FAIL %s\n", name); return false; }
-    ggml_tensor * w = ggml_new_tensor(g_ctx, ty, 2, (int64_t[]){in, out});
-    w->data = (void *) g_stage.data();
-    ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(x, in), in, 1);
-    ggml_tensor * r = ggml_mul_mat(g_ctx, w, xx);
-    if (!gcompute(r)) return false;
-    y.resize(out);
-    memcpy(y.data(), r->data, out * 4);
-    ctx_reset();
-    return true;
-}
-// Quant-native matvec over a row-range of a tensor viewed as 2-D [out, in]:
-// reads rows [first_row, first_row+out) (expert e's slice == rows [e*out, (e+1)*out)).
-static bool qmatvec_slice(Model & m, int id, int64_t out, int64_t in, int64_t first_row, const float * x, std::vector<float> & y) {
-    enum ggml_type ty = gguf_get_tensor_type(m.g, id);
-    size_t row_b = ggml_row_size(ty, in);
-    size_t nb = row_b * (size_t) out;
-    if (g_stage.size() < nb) g_stage.resize(nb);
-    if (!m.rd(g_stage.data(), nb, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id) + (size_t) first_row * row_b))) return false;
-    ggml_tensor * w = ggml_new_tensor(g_ctx, ty, 2, (int64_t[]){in, out});
-    w->data = (void *) g_stage.data();
-    ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(x, in), in, 1);
-    ggml_tensor * r = ggml_mul_mat(g_ctx, w, xx);
-    if (!gcompute(r)) return false;
-    y.resize(out);
-    memcpy(y.data(), r->data, out * 4);
-    ctx_reset();
-    return true;
-}
 // M-MAC-18: bit-exact NEON Q4_K row dequant. Matches ggml dequantize_row_q4_K
 // bit-for-bit: d*sc and d*n are exact in fp32 (<=21 mantissa bits), so the only
 // rounding is the final subtract, performed identically (explicit mul then sub —
@@ -213,6 +172,133 @@ static void validate_neon_dq(enum ggml_type ty, const uint8_t * src, float * dst
     else fprintf(stderr, "NEON_DQ MISMATCH -> library fallback\n");
 }
 
+// M-MAC-19 bounded expert-gate LRU (Q3N_GATE_LRU, default OFF): caches dequantized
+// fp32 gate slices keyed by (layer, expert). Memory: N slots x 4.2 MB, allocated
+// lazily, bounded by Q3N_GATE_LRU_N (default 64 = 268 MB). Slots are pinned while a
+// graph reads them; victim = least-recently-used unpinned slot. Values are produced
+// by the same bit-exact NEON dequant as the uncached path.
+static bool g_gate_lru = false;
+static int g_gate_lru_n = 64;
+struct GateSlot { std::vector<float> d; uint64_t key; bool pinned; bool used; };
+static std::vector<GateSlot> g_slots;
+static std::list<uint64_t> g_lru;                       // front = most recent
+static std::unordered_map<uint64_t, int> g_slot_of;     // key -> slot idx
+static long g_lru_hits = 0, g_lru_miss = 0;
+// returns pinned slot index, or -1 on failure (caller falls back to uncached path)
+static int gate_lru_acquire(Model & m, int idg, int l, int e, int64_t nvals) {
+    uint64_t key = ((uint64_t) l << 20) | (uint64_t) e;
+    auto it = g_slot_of.find(key);
+    if (it != g_slot_of.end()) {
+        int s = it->second;
+        if (g_slots[s].pinned) return -1;   // re-entrant same token (shouldn't happen)
+        g_lru_hits++;
+        g_lru.remove(key);
+        g_lru.push_front(key);
+        g_slots[s].pinned = true;
+        return s;
+    }
+    g_lru_miss++;
+    int slot = -1;
+    for (int s = 0; s < (int) g_slots.size(); ++s) if (!g_slots[s].used) { slot = s; break; }
+    if (slot < 0) {
+        for (auto li = g_lru.rbegin(); li != g_lru.rend(); ++li) {
+            int s = g_slot_of[*li];
+            if (!g_slots[s].pinned) { slot = s; break; }
+        }
+    }
+    if (slot < 0) return -1;
+    uint64_t vkey = g_slots[slot].key;
+    if (g_slots[slot].used) { g_slot_of.erase(vkey); g_lru.remove(vkey); }
+    if (g_slots[slot].d.empty()) g_slots[slot].d.resize((size_t) nvals);
+    enum ggml_type ty = gguf_get_tensor_type(m.g, idg);
+    const int64_t Ein = 2048;   // gate slice rows are E elements wide
+    size_t slice_b = ggml_row_size(ty, Ein) * (size_t)(nvals / Ein);
+    const uint8_t * qsrc;
+    if (m.map_exp) { qsrc = m.at(m.data_off + (size_t) gguf_get_tensor_offset(m.g, idg) + (size_t) e * slice_b); m.bytes_read += (int64_t) slice_b; }
+    else {
+        if (g_stage2.size() < slice_b) g_stage2.resize(slice_b);
+        if (!m.rd(g_stage2.data(), slice_b, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, idg) + (size_t) e * slice_b))) return -1;
+        qsrc = g_stage2.data();
+    }
+    if (g_neon_dq) dq4K_neon(qsrc, g_slots[slot].d.data(), nvals);
+    else ggml_get_type_traits(ty)->to_float(qsrc, g_slots[slot].d.data(), nvals);
+    g_slots[slot].key = key;
+    g_slots[slot].used = true;
+    g_slots[slot].pinned = true;
+    g_slot_of[key] = slot;
+    g_lru.push_front(key);
+    return slot;
+}
+
+// M-MAC-19 cache-pattern instrumentation (Q3N_CACHE_STATS): measures expert-gate
+// reuse under a previous-token cache and under an unbounded session cache.
+static bool g_cache_stats = false;
+static std::vector<std::vector<int>> g_prev_sel;
+static std::vector<std::vector<char>> g_seen;
+static long g_cs_prev_hits = 0, g_cs_prev_tot = 0, g_cs_sess_hits = 0;
+// per-layer LRU simulation for sizing: hit rates at several slot counts per layer
+static const int g_cs_sizes[] = { 2, 4, 6, 8, 12, 16, 24, 32 };
+static std::vector<std::list<int>> g_cs_lru[8];
+static std::vector<std::unordered_map<int, std::list<int>::iterator>> g_cs_pos[8];
+static long g_cs_sz_hits[8] = {0}, g_cs_sz_tot = 0;
+
+// M-MAC-18 bounded prefetch: kernel-driven readahead of the NEXT layer's static
+// weights via madvise(MADV_WILLNEED). No worker threads; the mapping is never
+// dereferenced (no RSS); page-cache growth is bounded by the per-layer window.
+static bool g_zerocopy = false;
+static bool g_prefetch = false;
+static char * g_map = nullptr;
+static std::vector<std::pair<size_t, size_t>> g_layer_range;
+
+// Quant-native matvec: staged quant bytes -> typed ggml tensor (aliased) -> mul_mat.
+static bool qmatvec(Model & m, const char * name, int64_t out, int64_t in, const float * x, std::vector<float> & y) {
+    int id = gguf_find_tensor(m.g, name);
+    if (id < 0) { fprintf(stderr, "NO_TENSOR %s\n", name); return false; }
+    const int64_t * ne = gguf_get_tensor_ne(m.g, id);
+    enum ggml_type ty = gguf_get_tensor_type(m.g, id);
+    size_t nb = ggml_row_size(ty, ne[0]);
+    for (int i = 1; i < GGML_MAX_DIMS && ne[i] > 0; ++i) nb *= (size_t) ne[i];
+    if (ne[0] != in || ne[1] != out) { fprintf(stderr, "SHAPE %s\n", name); return false; }
+    const uint8_t * srcb;
+    if (m.map) { srcb = m.at(m.data_off + (size_t) gguf_get_tensor_offset(m.g, id)); m.bytes_read += (int64_t) nb; }
+    else {
+        if (g_stage.size() < nb) g_stage.resize(nb);
+        if (!m.rd(g_stage.data(), nb, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id)))) { fprintf(stderr, "RD_FAIL %s\n", name); return false; }
+        srcb = g_stage.data();
+    }
+    ggml_tensor * w = ggml_new_tensor(g_ctx, ty, 2, (int64_t[]){in, out});
+    w->data = (void *) srcb;
+    ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(x, in), in, 1);
+    ggml_tensor * r = ggml_mul_mat(g_ctx, w, xx);
+    if (!gcompute(r)) return false;
+    y.resize(out);
+    memcpy(y.data(), r->data, out * 4);
+    ctx_reset();
+    return true;
+}
+// Quant-native matvec over a row-range of a tensor viewed as 2-D [out, in]:
+// reads rows [first_row, first_row+out) (expert e's slice == rows [e*out, (e+1)*out)).
+static bool qmatvec_slice(Model & m, int id, int64_t out, int64_t in, int64_t first_row, const float * x, std::vector<float> & y) {
+    enum ggml_type ty = gguf_get_tensor_type(m.g, id);
+    size_t row_b = ggml_row_size(ty, in);
+    size_t nb = row_b * (size_t) out;
+    const uint8_t * srcb;
+    if (m.map_exp) { srcb = m.at(m.data_off + (size_t) gguf_get_tensor_offset(m.g, id) + (size_t) first_row * row_b); m.bytes_read += (int64_t) nb; }
+    else {
+        if (g_stage.size() < nb) g_stage.resize(nb);
+        if (!m.rd(g_stage.data(), nb, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id) + (size_t) first_row * row_b))) return false;
+        srcb = g_stage.data();
+    }
+    ggml_tensor * w = ggml_new_tensor(g_ctx, ty, 2, (int64_t[]){in, out});
+    w->data = (void *) srcb;
+    ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(x, in), in, 1);
+    ggml_tensor * r = ggml_mul_mat(g_ctx, w, xx);
+    if (!gcompute(r)) return false;
+    y.resize(out);
+    memcpy(y.data(), r->data, out * 4);
+    ctx_reset();
+    return true;
+}
 struct QM { const char * name; int64_t out, in; std::vector<float> * y; };
 // k quant matvecs sharing one input x in a SINGLE graph: one threadpool dispatch and
 // one ctx_reset instead of k. Per-row math is identical to sequential qmatvec calls.
@@ -235,9 +321,14 @@ static bool qmatvec_multi(Model & m, const QM * ops, int k, const float * x) {
     ggml_tensor * rs[8];
     size_t off = 0;
     for (int i = 0; i < k; ++i) {
-        if (!m.rd(g_stage4.data() + off, sz[i], (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id[i])))) { fprintf(stderr, "RD_FAIL %s\n", ops[i].name); return false; }
+        const uint8_t * srcb;
+        if (m.map) { srcb = m.at(m.data_off + (size_t) gguf_get_tensor_offset(m.g, id[i])); m.bytes_read += (int64_t) sz[i]; }
+        else {
+            if (!m.rd(g_stage4.data() + off, sz[i], (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id[i])))) { fprintf(stderr, "RD_FAIL %s\n", ops[i].name); return false; }
+            srcb = g_stage4.data() + off;
+        }
         ggml_tensor * w = ggml_new_tensor(g_ctx, tyv[i], 2, (int64_t[]){ops[i].in, ops[i].out});
-        w->data = (void *)(g_stage4.data() + off);
+        w->data = (void *) srcb;
         off += sz[i];
         rs[i] = ggml_mul_mat(g_ctx, w, xx);
     }
@@ -263,16 +354,21 @@ static bool load_f32(Model & m, const char * name, std::vector<float> & out, boo
     size_t nb = ggml_row_size(ty, ne[0]);
     for (int i = 1; i < dims; ++i) nb *= (size_t) ne[i];
     prof_tick();
-    g_stage.resize(nb);
-    if (!m.rd(g_stage.data(), nb, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id)))) { fprintf(stderr, "RD_FAIL %s\n", name); return false; }
+    const uint8_t * srcb;
+    if (m.map) { srcb = m.at(m.data_off + (size_t) gguf_get_tensor_offset(m.g, id)); m.bytes_read += (int64_t) nb; }
+    else {
+        g_stage.resize(nb);
+        if (!m.rd(g_stage.data(), nb, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id)))) { fprintf(stderr, "RD_FAIL %s\n", name); return false; }
+        srcb = g_stage.data();
+    }
     g_prof_rd += prof_tock(); prof_tick();
     out.resize(n);
     if (ty == GGML_TYPE_F32) {
-        memcpy(out.data(), g_stage.data(), n * 4);
+        memcpy(out.data(), srcb, n * 4);
     } else {
         const ggml_type_traits * tr = ggml_get_type_traits(ty);
         if (!tr || !tr->to_float) { fprintf(stderr, "NO_TO_FLOAT %s type=%d\n", name, (int) ty); return false; }
-        tr->to_float(g_stage.data(), out.data(), n);
+        tr->to_float(srcb, out.data(), n);
     }
     g_prof_dq += prof_tock(); prof_tick();
     return true;
@@ -299,6 +395,31 @@ int main(int argc, char ** argv) {
     if (!m.g) { fprintf(stderr, "GGUF_FAIL\n"); return 1; }
     m.data_off = gguf_get_data_offset(m.g);
     // bounded prefetch setup (Q3N_PREFETCH=1): mmap file for madvise + per-layer ranges
+    g_zerocopy = getenv("Q3N_ZEROCOPY") != nullptr;
+    if (g_zerocopy) {
+        struct stat fst;
+        if (fstat(m.fd, &fst) == 0 && fst.st_size > 0) {
+            void * mm = mmap(nullptr, (size_t) fst.st_size, PROT_READ, MAP_SHARED, m.fd, 0);
+            if (mm == MAP_FAILED) { g_zerocopy = false; fprintf(stderr, "ZEROCOPY_DISABLED mmap\n"); }
+            else {
+                // alignment gate: every tensor must be 16-byte aligned for NEON vec_dot
+                bool ok = true;
+                int nt = gguf_get_n_tensors(m.g);
+                for (int i = 0; i < nt && ok; ++i) {
+                    size_t a = m.data_off + (size_t) gguf_get_tensor_offset(m.g, i);
+                    if (a % 16) ok = false;
+                }
+                if (ok) {
+                    m.map = (const uint8_t *) mm;
+                    const char * zcm = getenv("Q3N_ZEROCOPY");
+                    if (zcm && zcm[0] == '1') m.map_exp = m.map;   // full: experts too
+                    fprintf(stderr, "ZEROCOPY mode=%s\n", (m.map_exp ? "full" : "hybrid-static"));
+                }
+                else { g_zerocopy = false; munmap(mm, (size_t) fst.st_size); fprintf(stderr, "ZEROCOPY_DISABLED alignment\n"); }
+            }
+        } else { g_zerocopy = false; fprintf(stderr, "ZEROCOPY_DISABLED fstat\n"); }
+        if (g_zerocopy) fprintf(stderr, "ZEROCOPY enabled\n");
+    }
     g_prefetch = getenv("Q3N_PREFETCH") != nullptr;
     if (g_prefetch) {
         struct stat fst;
@@ -413,9 +534,15 @@ int main(int argc, char ** argv) {
         std::vector<uint8_t> blk(ggml_row_size(ety, 256));
         std::vector<float> bv(256);
         for (int b = 0; b < blocks; ++b) {
-            if (!m.rd(blk.data(), blk.size(), (off_t)(emb_base + ((size_t) tok * blocks + b) * ggml_row_size(ety, 256)))) { fprintf(stderr, "EMB_FAIL\n"); exit(1); }
-            if (ety == GGML_TYPE_F32) memcpy(bv.data(), blk.data(), 256 * 4);
-            else etr->to_float(blk.data(), bv.data(), 256);
+            size_t off = emb_base + ((size_t) tok * blocks + b) * ggml_row_size(ety, 256);
+            const uint8_t * srcb;
+            if (m.map) { srcb = m.at(off); m.bytes_read += (int64_t) blk.size(); }
+            else {
+                if (!m.rd(blk.data(), blk.size(), (off_t) off)) { fprintf(stderr, "EMB_FAIL\n"); exit(1); }
+                srcb = blk.data();
+            }
+            if (ety == GGML_TYPE_F32) memcpy(bv.data(), srcb, 256 * 4);
+            else etr->to_float(srcb, bv.data(), 256);
             memcpy(x + (size_t) b * 256, bv.data(), 256 * 4);
         }
     };
@@ -660,6 +787,33 @@ int main(int argc, char ** argv) {
             { std::vector<int> idx(m.n_exp); for (int i = 0; i < m.n_exp; ++i) idx[i] = i;
               std::partial_sort(idx.begin(), idx.begin() + m.n_used, idx.end(), [&](int a, int b){ return rl[a] > rl[b]; });
               for (int i = 0; i < m.n_used; ++i) sel[i] = idx[i]; }
+            if (g_cache_stats) {
+                for (int i = 0; i < m.n_used; ++i) {
+                    int e = sel[i];
+                    for (int p : g_prev_sel[l]) if (p == e) { g_cs_prev_hits++; break; }
+                    g_cs_prev_tot++;
+                    if (!g_seen[l][e]) g_seen[l][e] = 1; else g_cs_sess_hits++;
+                }
+                g_prev_sel[l].assign(sel.begin(), sel.end());
+                g_cs_sz_tot += m.n_used;
+                for (int s = 0; s < 8; ++s) {
+                    auto & lr = g_cs_lru[s][l];
+                    auto & pm = g_cs_pos[s][l];
+                    size_t cap = (size_t) g_cs_sizes[s];
+                    for (int i = 0; i < m.n_used; ++i) {
+                        int e = sel[i];
+                        auto it = pm.find(e);
+                        if (it != pm.end()) {
+                            g_cs_sz_hits[s]++;
+                            lr.erase(it->second);
+                            pm.erase(it);
+                        }
+                        lr.push_front(e);
+                        pm.emplace(e, lr.begin());
+                        while (lr.size() > cap) { pm.erase(lr.back()); lr.pop_back(); }
+                    }
+                }
+            }
             if (getenv("Q3N_TRACE0") && l == 0) {
                 fprintf(stderr, "Q3N selected experts:");
                 for (int i2 = 0; i2 < m.n_used; ++i2) fprintf(stderr, " %d", sel[i2]);
@@ -694,50 +848,146 @@ int main(int argc, char ** argv) {
             enum ggml_type tyd = gguf_get_tensor_type(m.g, idd);
             size_t slice_gu = ggml_row_size(tyg, E) * (size_t) FFE;
             size_t slice_dn = ggml_row_size(tyd, FFE) * (size_t) E;
-            if (g_stage2.size() < slice_gu * m.n_used) g_stage2.resize(slice_gu * m.n_used);
-            if (g_stage3.size() < slice_gu * m.n_used) g_stage3.resize(slice_gu * m.n_used);
-            for (int i = 0; i < m.n_used; ++i) {
-                int e = sel[i];
-                if (!m.rd(g_stage2.data() + (size_t)i * slice_gu, slice_gu, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, idg) + (size_t)e * slice_gu))) return false;
-                if (!m.rd(g_stage3.data() + (size_t)i * slice_gu, slice_gu, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, idu) + (size_t)e * slice_gu))) return false;
+            // M-MAC-19: try bounded gate LRU first (flag-gated); fall back to staging
+            bool lru_ok = false;
+            std::vector<int> gslot(m.n_used, -1);
+            if (g_gate_lru) {
+                lru_ok = true;
+                for (int i = 0; i < m.n_used; ++i) {
+                    gslot[i] = gate_lru_acquire(m, idg, l, sel[i], FFE * E);
+                    if (gslot[i] < 0) { lru_ok = false; for (int j = 0; j < i; ++j) g_slots[gslot[j]].pinned = false; break; }
+                }
+            }
+            std::vector<size_t> up_off(m.n_used, 0);   // absolute file offsets of up slices
+            if (!lru_ok) {
+                if (m.map_exp) {
+                    for (int i = 0; i < m.n_used; ++i) {
+                        int e = sel[i];
+                        up_off[i] = m.data_off + (size_t) gguf_get_tensor_offset(m.g, idu) + (size_t) e * slice_gu;
+                        m.bytes_read += (int64_t) slice_gu * 2;
+                    }
+                } else {
+                    if (g_stage2.size() < slice_gu * m.n_used) g_stage2.resize(slice_gu * m.n_used);
+                    if (g_stage3.size() < slice_gu * m.n_used) g_stage3.resize(slice_gu * m.n_used);
+                    for (int i = 0; i < m.n_used; ++i) {
+                        int e = sel[i];
+                        if (!m.rd(g_stage2.data() + (size_t)i * slice_gu, slice_gu, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, idg) + (size_t)e * slice_gu))) return false;
+                        if (!m.rd(g_stage3.data() + (size_t)i * slice_gu, slice_gu, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, idu) + (size_t)e * slice_gu))) return false;
+                    }
+                }
+            } else {
+                if (m.map_exp) {
+                    for (int i = 0; i < m.n_used; ++i) {
+                        int e = sel[i];
+                        up_off[i] = m.data_off + (size_t) gguf_get_tensor_offset(m.g, idu) + (size_t) e * slice_gu;
+                        m.bytes_read += (int64_t) slice_gu;
+                    }
+                } else {
+                    if (g_stage3.size() < slice_gu * m.n_used) g_stage3.resize(slice_gu * m.n_used);
+                    for (int i = 0; i < m.n_used; ++i) {
+                        int e = sel[i];
+                        if (!m.rd(g_stage3.data() + (size_t)i * slice_gu, slice_gu, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, idu) + (size_t)e * slice_gu))) return false;
+                    }
+                }
             }
             prof_tick();
             // phase A: one graph computes all gate (fp32) and up (quant) projections
-            ggml_tensor * wg_all = ggml_new_tensor(g_ctx, GGML_TYPE_F32, 2, (int64_t[]){E, FFE * m.n_used});
-            if (g_neon_dq < 0) validate_neon_dq(tyg, g_stage2.data(), (float *) wg_all->data, FFE * m.n_used * E);
-            else if (g_neon_dq) dq4K_neon(g_stage2.data(), (float *) wg_all->data, FFE * m.n_used * E);
-            else ggml_get_type_traits(tyg)->to_float(g_stage2.data(), (float *) wg_all->data, FFE * m.n_used * E);
-            ggml_tensor * wu_all = ggml_new_tensor(g_ctx, tyu, 2, (int64_t[]){E, FFE * m.n_used});
-            wu_all->data = (void *) g_stage3.data();
-            ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(normed.data(), E), E, 1);
-            ggml_tensor * g1all = ggml_mul_mat(g_ctx, wg_all, xx);
-            ggml_tensor * u1all = ggml_mul_mat(g_ctx, wu_all, xx);
-            {
+            std::vector<std::vector<float>> g1s(m.n_used);
+            const float * u1p;
+            ggml_tensor * u1r[16];
+            ggml_tensor * u1all = nullptr;
+            ggml_tensor * u1a = nullptr;
+            auto up_at = [&](int i, int j) -> float {
+                return m.map_exp ? ((const float *) u1r[i]->data)[j] : u1p[(size_t)i * FFE + j];
+            };
+            if (!lru_ok) {
+                ggml_tensor * wg_all = ggml_new_tensor(g_ctx, GGML_TYPE_F32, 2, (int64_t[]){E, FFE * m.n_used});
+                for (int i = 0; i < m.n_used; ++i) {
+                    const uint8_t * gs = m.map_exp ? m.at(m.data_off + (size_t) gguf_get_tensor_offset(m.g, idg) + (size_t) sel[i] * slice_gu)
+                                                   : g_stage2.data() + (size_t) i * slice_gu;
+                    float * gd = (float *) wg_all->data + (size_t) i * FFE * E;
+                    if (g_neon_dq < 0) validate_neon_dq(tyg, gs, gd, FFE * E);
+                    else if (g_neon_dq) dq4K_neon(gs, gd, FFE * E);
+                    else ggml_get_type_traits(tyg)->to_float(gs, gd, FFE * E);
+                }
+                ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(normed.data(), E), E, 1);
+                ggml_tensor * g1all = ggml_mul_mat(g_ctx, wg_all, xx);
                 ggml_cgraph * gf = ggml_new_graph(g_ctx);
                 ggml_build_forward_expand(gf, g1all);
-                ggml_build_forward_expand(gf, u1all);
+                if (m.map_exp) {
+                    for (int i = 0; i < m.n_used; ++i) {
+                        ggml_tensor * wu = ggml_new_tensor(g_ctx, tyu, 2, (int64_t[]){E, FFE});
+                        wu->data = (void *) m.at(up_off[i]);
+                        u1r[i] = ggml_mul_mat(g_ctx, wu, xx);
+                        ggml_build_forward_expand(gf, u1r[i]);
+                    }
+                } else {
+                    u1all = ggml_new_tensor(g_ctx, tyu, 2, (int64_t[]){E, FFE * m.n_used});
+                    u1all->data = (void *) g_stage3.data();
+                    u1a = ggml_mul_mat(g_ctx, u1all, xx);
+                    ggml_build_forward_expand(gf, u1a);
+                }
+                {
+                    if (!g_backend || ggml_backend_graph_compute(g_backend, gf) != GGML_STATUS_SUCCESS) return false;
+                }
+                const float * g1p = (const float *) g1all->data;
+                if (!m.map_exp) u1p = (const float *) u1a->data;
+                for (int i = 0; i < m.n_used; ++i) {
+                    std::vector<float> & g1 = g1s[i];
+                    g1.resize(FFE);
+                    for (int j = 0; j < FFE; ++j) { float gv = g1p[(size_t)i * FFE + j]; g1[j] = gv / (1.0f + expf(-gv)) * up_at(i, j); }
+                }
+            } else {
+                ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(normed.data(), E), E, 1);
+                ggml_tensor * g1r2[16];
+                ggml_cgraph * gf = ggml_new_graph(g_ctx);
+                if (m.map_exp) {
+                    for (int i = 0; i < m.n_used; ++i) {
+                        ggml_tensor * wu = ggml_new_tensor(g_ctx, tyu, 2, (int64_t[]){E, FFE});
+                        wu->data = (void *) m.at(up_off[i]);
+                        u1r[i] = ggml_mul_mat(g_ctx, wu, xx);
+                        ggml_build_forward_expand(gf, u1r[i]);
+                    }
+                } else {
+                    u1all = ggml_new_tensor(g_ctx, tyu, 2, (int64_t[]){E, FFE * m.n_used});
+                    u1all->data = (void *) g_stage3.data();
+                    u1a = ggml_mul_mat(g_ctx, u1all, xx);
+                    ggml_build_forward_expand(gf, u1a);
+                }
+                for (int i = 0; i < m.n_used; ++i) {
+                    ggml_tensor * wg = ggml_new_tensor(g_ctx, GGML_TYPE_F32, 2, (int64_t[]){E, FFE});
+                    wg->data = (void *) g_slots[gslot[i]].d.data();
+                    g1r2[i] = ggml_mul_mat(g_ctx, wg, xx);
+                    ggml_build_forward_expand(gf, g1r2[i]);
+                }
+                ensure_backend();
                 if (!g_backend || ggml_backend_graph_compute(g_backend, gf) != GGML_STATUS_SUCCESS) return false;
-            }
-            const float * g1p = (const float *) g1all->data;
-            const float * u1p = (const float *) u1all->data;
-            std::vector<std::vector<float>> g1s(m.n_used);
-            for (int i = 0; i < m.n_used; ++i) {
-                std::vector<float> & g1 = g1s[i];
-                g1.resize(FFE);
-                for (int j = 0; j < FFE; ++j) { float gv = g1p[(size_t)i * FFE + j]; g1[j] = gv / (1.0f + expf(-gv)) * u1p[(size_t)i * FFE + j]; }
+                if (!m.map_exp) u1p = (const float *) u1a->data;
+                for (int i = 0; i < m.n_used; ++i) {
+                    const float * g1p = (const float *) g1r2[i]->data;
+                    std::vector<float> & g1 = g1s[i];
+                    g1.resize(FFE);
+                    for (int j = 0; j < FFE; ++j) { float gv = g1p[j]; g1[j] = gv / (1.0f + expf(-gv)) * up_at(i, j); }
+                    g_slots[gslot[i]].pinned = false;
+                }
             }
             // phase B: one graph computes all down projections
-            if (g_stage.size() < slice_dn * m.n_used) g_stage.resize(slice_dn * m.n_used);
-            for (int i = 0; i < m.n_used; ++i) {
-                int e = sel[i];
-                if (!m.rd(g_stage.data() + (size_t)i * slice_dn, slice_dn, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, idd) + (size_t)e * slice_dn))) return false;
+            if (!m.map_exp) {
+                if (g_stage.size() < slice_dn * m.n_used) g_stage.resize(slice_dn * m.n_used);
+                for (int i = 0; i < m.n_used; ++i) {
+                    int e = sel[i];
+                    if (!m.rd(g_stage.data() + (size_t)i * slice_dn, slice_dn, (off_t)(m.data_off + gguf_get_tensor_offset(m.g, idd) + (size_t)e * slice_dn))) return false;
+                }
+            } else {
+                for (int i = 0; i < m.n_used; ++i) m.bytes_read += (int64_t) slice_dn;
             }
             std::vector<ggml_tensor *> douts(m.n_used);
             {
                 ggml_cgraph * gf = ggml_new_graph(g_ctx);
                 for (int i = 0; i < m.n_used; ++i) {
                     ggml_tensor * wd = ggml_new_tensor(g_ctx, tyd, 2, (int64_t[]){FFE, E});
-                    wd->data = (void *)(g_stage.data() + (size_t)i * slice_dn);
+                    wd->data = m.map_exp ? (void *) m.at(m.data_off + (size_t) gguf_get_tensor_offset(m.g, idd) + (size_t) sel[i] * slice_dn)
+                                         : (void *)(g_stage.data() + (size_t)i * slice_dn);
                     ggml_tensor * xv = ggml_reshape_2d(g_ctx, f32t(g1s[i].data(), FFE), FFE, 1);
                     douts[i] = ggml_mul_mat(g_ctx, wd, xv);
                     ggml_build_forward_expand(gf, douts[i]);
@@ -791,6 +1041,13 @@ int main(int argc, char ** argv) {
     };
 
     g_prof = getenv("Q3N_PROFILE") != nullptr;
+    g_cache_stats = getenv("Q3N_CACHE_STATS") != nullptr;
+    if (g_cache_stats) { g_prev_sel.assign(m.n_layer, {}); g_seen.assign(m.n_layer, std::vector<char>(m.n_exp, 0));
+        for (int s = 0; s < 8; ++s) { g_cs_lru[s].assign(m.n_layer, {}); g_cs_pos[s].assign(m.n_layer, {}); } }
+    g_gate_lru = getenv("Q3N_GATE_LRU") != nullptr;
+    if (getenv("Q3N_GATE_LRU_N")) g_gate_lru_n = atoi(getenv("Q3N_GATE_LRU_N"));
+    if (g_gate_lru_n < 16) g_gate_lru_n = 16;
+    if (g_gate_lru) { g_slots.assign(g_gate_lru_n, GateSlot{ {}, 0, false, false }); fprintf(stderr, "Q3N_GATE_LRU enabled slots=%d (~%.0f MB max)\n", g_gate_lru_n, g_gate_lru_n * 4.2); }
     ensure_backend();
     struct rusage ru0; getrusage(RUSAGE_SELF, &ru0);
     auto t0 = std::chrono::steady_clock::now();
@@ -817,6 +1074,17 @@ int main(int argc, char ** argv) {
         double tot = g_prof_load + g_prof_compute + g_prof_rec + g_prof_attn + g_prof_moe + g_prof_head;
         fprintf(stderr, "Q3N_PROF rd=%.2fs dequant=%.2fs compute=%.2fs gdn=%.2fs attn=%.2fs moe=%.2fs head=%.2fs accounted=%.2f/%ddom\n",
             g_prof_rd, g_prof_dq, g_prof_compute, g_prof_rec, g_prof_attn, g_prof_moe, g_prof_head, tot, n_gen);
+    }
+    if (g_gate_lru) fprintf(stderr, "Q3N_GATE_LRU hits=%ld miss=%ld hit_rate=%.1f%%\n",
+        g_lru_hits, g_lru_miss, 100.0 * g_lru_hits / (g_lru_hits + g_lru_miss + 1));
+    if (g_cache_stats) {
+        long sess_tot = g_cs_prev_tot;
+        fprintf(stderr, "Q3N_CACHE_STATS prev_token_hit=%.1f%% (%.0f/%.0f) session_unbounded_hit=%.1f%%\n",
+            100.0 * g_cs_prev_hits / g_cs_prev_tot, (double) g_cs_prev_hits, (double) g_cs_prev_tot,
+            100.0 * g_cs_sess_hits / sess_tot);
+        for (int s = 0; s < 8; ++s)
+            fprintf(stderr, "  per_layer_lru slots_per_layer=%-2d hits=%ld/%ld hit=%.1f%% (memory %.0f MB)\n",
+                g_cs_sizes[s], g_cs_sz_hits[s], g_cs_sz_tot, 100.0 * g_cs_sz_hits[s] / g_cs_sz_tot, g_cs_sizes[s] * m.n_layer * 4.2);
     }
     fprintf(stderr, "Q3N_PASS=1 gens=%d wall_s=%.2f tok_per_s=%.3f bytes_read=%lld peak_rss_kb=%ld\n",
         n_gen, wall, n_gen / wall, (long long) m.bytes_read, ru1.ru_maxrss / 1024);
