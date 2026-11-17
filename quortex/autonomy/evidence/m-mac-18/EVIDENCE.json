@@ -1,0 +1,69 @@
+{
+  "milestone": "M-MAC-18",
+  "date_utc": "2026-11-17",
+  "status": "PASS: 2.26 tok/s warm sustained (target >=2.0 ACHIEVED, measured); 0.98 tok/s true cold; guards green; verified streams exact",
+  "commit": "3525685",
+  "branch": "dev/macos-arm64-qwen3next",
+  "model": "~/Downloads/Huihui-Qwen3-Coder-Next-abliterated.Q4_K_M.gguf (read-only, unmodified)",
+  "stages": [
+    {
+      "stage": "1 batched head graph (stage-all + 1 graph + 1 ctx_reset)",
+      "result": "REJECTED: 1.583 tok/s (vs 1.604 baseline, within noise) at +235 MB RSS for the 255 MB head staging buffer; reverted before commit"
+    },
+    {
+      "stage": "2 batched projection graphs (qmatvec_multi)",
+      "detail": "GDN qkv+gate (2 ops), attention q/k/v (3 ops), router+shared-expert gate+up (3 ops) each in ONE graph; ensure_backend() initialized once before the token loop (fixes first-graph-call failure when multi runs first)",
+      "result": "ACCEPTED: 1.604 -> 1.663 tok/s warm median (+3.7%), peak RSS 587 MB (+13 MB g_stage4)"
+    },
+    {
+      "stage": "3 bounded prefetch via madvise(MADV_WILLNEED)",
+      "detail": "Q3N_PREFETCH flag; mmap(PROT_READ, never dereferenced) + per-layer static-weight ranges issued one layer ahead; no worker threads; page-cache-only memory (bounded ~25 MB window, evictable)",
+      "result": "REJECTED: consistently SLOWER (warm 1.20-1.33 vs 1.66-2.27, ~-30-40%) on this macOS build; flag default OFF = synchronous fallback, code retained as negative result"
+    },
+    {
+      "stage": "4 bit-exact NEON Q4_K dequant for expert-gate fp32 path",
+      "detail": "dq4K_neon replicates ggml dequantize_row_q4_K: d*sc and d*n are exact in fp32 (<=21 mantissa bits), single rounding on the subtract via explicit vmul/vsub (no FMA contraction); runtime one-time validation on the real staged gate buffer (full 10-expert slice) against library to_float via memcmp, library fallback on mismatch",
+      "result": "ACCEPTED: NEON_DQ validated bit-exact; 1.663 -> 2.26 tok/s (+36%, consistent with ~27% prior dequant share of samples)"
+    }
+  ],
+  "performance": {
+    "baseline_mmac17_warm_median": 1.604,
+    "mmac18_warm_median_of_3": 2.263,
+    "mmac18_warm_runs": [2.249, 2.265, 2.263],
+    "mmac18_true_cold": 0.981,
+    "speedup_vs_mmac17": "+41%",
+    "speedup_vs_mmac16_original": "5.2x (0.433 -> 2.26)",
+    "peak_rss_mb": 632,
+    "rss_cap_2gb": "31% of cap",
+    "bytes_read_per_token_gb": 2.41,
+    "note": "2.26 tok/s is WARM page-cache performance: 2.41 GB/token working set fits in RAM after first token. True cold (12 GB eviction) = 0.98 tok/s, disk-bound."
+  },
+  "numerical_regression": {
+    "preserved_streams": {
+      "9707_x4": {"expected": [25, 198, 198, 40], "actual": [25, 198, 198, 40], "max_logit_step3": 15.8909, "result": "EXACT, bit-stable"},
+      "100000": {"expected": 18493, "actual": 18493, "max_logit": 8.5328, "result": "EXACT"}
+    },
+    "extended_16token_vs_fp32": {"identical_prefix": 15, "note": "diverges at step 15 (1043 vs 67) — SAME known near-tie as M-MAC-17; batched graphs + NEON introduced zero new drift"},
+    "extra_prompts_6token": {"100000,18493": "6/6 identical", "25": "6/6 identical", "614": "2/6 then diverges (known near-tie, unchanged from M-MAC-17)"},
+    "cold_run_correctness": "gen=40 exact on true cold-cache run"
+  },
+  "guards_and_robustness": {
+    "rss_cap_2gb": "peak 632 MB (31%)",
+    "timeout_90s": "32-token prefill + 2 gen: 1.34 s wall (was 85.43 in M-MAC-16), PASS=1",
+    "cancellation": "SIGTERM terminates promptly (status 143); no handlers/state; process death cleans threadpool+mmap; fail-closed",
+    "repeated_runs": "warm medians within +/-0.4%",
+    "fallbacks": "Q3N_PREFETCH off = synchronous reads (identical to M-MAC-17 path); NEON_DQ mismatch -> library to_float (fail-closed numerics)",
+    "gguf_files": "no model/download files modified, moved, deleted; download left running untouched"
+  },
+  "memory_accounting": {
+    "g_stage4_multi_buffer": "~16 MB persistent",
+    "neon_validation_buffer": "~42 MB transient (one-time, freed)",
+    "prefetch_mmap": "virtual only, PROT_READ never dereferenced, no RSS; page-cache window ~25 MB evictable",
+    "threadpool": "6 ggml workers, persistent, process-scoped"
+  },
+  "go_nogo": {
+    "tok_per_s_target": ">= 2.0",
+    "verdict": "GO (warm): 2.26 measured sustained. NO-GO (cold): 0.98 disk-bound — inherent to 2.41 GB/token streaming, not a defect.",
+    "recommendation": "endpoint work can assume ~2 tok/s warm after first token; keep 90 s guard for long generations"
+  }
+}
