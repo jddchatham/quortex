@@ -24,6 +24,7 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <arm_neon.h>
 
 static bool pread_full(int fd, void * dst, size_t n, off_t off) {
     char * p = (char *) dst;
@@ -61,23 +62,25 @@ static struct ProfTimer { std::chrono::steady_clock::time_point t0; } g_pt;
 static void prof_tick() { g_pt.t0 = std::chrono::steady_clock::now(); }
 static double prof_tock() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - g_pt.t0).count(); }
 
+static void ensure_backend() {
+    if (g_backend) return;
+    g_backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
+    if (g_backend) {
+        ggml_threadpool_params tp{ };
+        for (int i = 0; i < GGML_MAX_N_THREADS; ++i) tp.cpumask[i] = false;
+        tp.n_threads = getenv("Q3N_THREADS") ? atoi(getenv("Q3N_THREADS")) : 6;
+        tp.prio = GGML_SCHED_PRIO_NORMAL;
+        tp.poll = getenv("Q3N_POLL") ? atoi(getenv("Q3N_POLL")) : 0;
+        tp.strict_cpu = false;
+        tp.paused = false;
+        g_tp = ggml_threadpool_new(&tp);
+        if (g_tp) ggml_backend_cpu_set_threadpool(g_backend, g_tp);
+    }
+}
 static bool gcompute(ggml_tensor * out) {
     ggml_cgraph * gf = ggml_new_graph(g_ctx);
     ggml_build_forward_expand(gf, out);
-    if (!g_backend) {
-        g_backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
-        if (g_backend) {
-            ggml_threadpool_params tp{ };
-            for (int i = 0; i < GGML_MAX_N_THREADS; ++i) tp.cpumask[i] = false;
-            tp.n_threads = getenv("Q3N_THREADS") ? atoi(getenv("Q3N_THREADS")) : 6;
-            tp.prio = GGML_SCHED_PRIO_NORMAL;
-            tp.poll = getenv("Q3N_POLL") ? atoi(getenv("Q3N_POLL")) : 0;
-            tp.strict_cpu = false;
-            tp.paused = false;
-            g_tp = ggml_threadpool_new(&tp);
-            if (g_tp) ggml_backend_cpu_set_threadpool(g_backend, g_tp);
-        }
-    }
+    ensure_backend();
     return g_backend && ggml_backend_graph_compute(g_backend, gf) == GGML_STATUS_SUCCESS;
 }
 static void ctx_reset() {
@@ -111,6 +114,14 @@ static bool matvec(const float * Wf, int64_t out, int64_t in, const float * x, s
 static std::vector<uint8_t> g_stage;
 static std::vector<uint8_t> g_stage2;
 static std::vector<uint8_t> g_stage3;
+static std::vector<uint8_t> g_stage4;
+
+// M-MAC-18 bounded prefetch: kernel-driven readahead of the NEXT layer's static
+// weights via madvise(MADV_WILLNEED). No worker threads; the mapping is never
+// dereferenced (no RSS); page-cache growth is bounded by the per-layer window.
+static bool g_prefetch = false;
+static char * g_map = nullptr;
+static std::vector<std::pair<size_t, size_t>> g_layer_range;
 
 // Quant-native matvec: staged quant bytes -> typed ggml tensor (aliased) -> mul_mat.
 static bool qmatvec(Model & m, const char * name, int64_t out, int64_t in, const float * x, std::vector<float> & y) {
@@ -148,6 +159,96 @@ static bool qmatvec_slice(Model & m, int id, int64_t out, int64_t in, int64_t fi
     if (!gcompute(r)) return false;
     y.resize(out);
     memcpy(y.data(), r->data, out * 4);
+    ctx_reset();
+    return true;
+}
+// M-MAC-18: bit-exact NEON Q4_K row dequant. Matches ggml dequantize_row_q4_K
+// bit-for-bit: d*sc and d*n are exact in fp32 (<=21 mantissa bits), so the only
+// rounding is the final subtract, performed identically (explicit mul then sub —
+// no FMA contraction). Validated against the library at runtime before first use.
+static inline void get_scale_min_k4_18(int j, const uint8_t * q, uint8_t * d, uint8_t * m) {
+    if (j < 4) { *d = q[j] & 63; *m = q[j + 4] & 63; }
+    else { *d = (q[j + 4] & 0xF) | ((q[j - 4] >> 6) << 4); *m = (q[j + 4] >> 4) | ((q[j] >> 6) << 4); }
+}
+static inline void dq32_neon(const uint8_t * q, bool high, float dv, float mv, float * y) {
+    uint8x16_t b0 = vld1q_u8(q), b1 = vld1q_u8(q + 16);
+    if (high) { b0 = vshrq_n_u8(b0, 4); b1 = vshrq_n_u8(b1, 4); }
+    else      { b0 = vandq_u8(b0, vdupq_n_u8(0xF)); b1 = vandq_u8(b1, vdupq_n_u8(0xF)); }
+    float32x4_t dvv = vdupq_n_f32(dv), mvv = vdupq_n_f32(mv);
+    uint16x8_t w0 = vmovl_u8(vget_low_u8(b0)), w1 = vmovl_u8(vget_high_u8(b0));
+    uint16x8_t w2 = vmovl_u8(vget_low_u8(b1)), w3 = vmovl_u8(vget_high_u8(b1));
+    float32x4_t f[8];
+    f[0] = vcvtq_f32_u32(vmovl_u16(vget_low_u16(w0)));  f[1] = vcvtq_f32_u32(vmovl_u16(vget_high_u16(w0)));
+    f[2] = vcvtq_f32_u32(vmovl_u16(vget_low_u16(w1)));  f[3] = vcvtq_f32_u32(vmovl_u16(vget_high_u16(w1)));
+    f[4] = vcvtq_f32_u32(vmovl_u16(vget_low_u16(w2)));  f[5] = vcvtq_f32_u32(vmovl_u16(vget_high_u16(w2)));
+    f[6] = vcvtq_f32_u32(vmovl_u16(vget_low_u16(w3)));  f[7] = vcvtq_f32_u32(vmovl_u16(vget_high_u16(w3)));
+    for (int i = 0; i < 8; ++i) vst1q_f32(y + 4 * i, vsubq_f32(vmulq_f32(dvv, f[i]), mvv));
+}
+static void dq4K_neon(const uint8_t * src, float * dst, int64_t k) {
+    const int nb = (int)(k / 256);
+    for (int b = 0; b < nb; ++b) {
+        const uint8_t * blk = src + (size_t)b * 144;
+        float d = ggml_fp16_to_fp32(((const ggml_fp16_t *) blk)[0]);
+        float dmin = ggml_fp16_to_fp32(((const ggml_fp16_t *) blk)[1]);
+        uint8_t sc[8], mn[8];
+        for (int j = 0; j < 8; ++j) get_scale_min_k4_18(j, blk + 4, &sc[j], &mn[j]);
+        const uint8_t * qs = blk + 16;
+        float * y = dst + (size_t)b * 256;
+        for (int g = 0; g < 4; ++g) {
+            dq32_neon(qs + g * 32, false, d * sc[2 * g],     dmin * mn[2 * g],     y + g * 64);
+            dq32_neon(qs + g * 32, true,  d * sc[2 * g + 1], dmin * mn[2 * g + 1], y + g * 64 + 32);
+        }
+    }
+}
+static int g_neon_dq = -1;   // -1 unknown, 1 validated bit-exact, 0 fallback
+// one-time validation: full staged gate buffer, NEON vs library to_float
+static void validate_neon_dq(enum ggml_type ty, const uint8_t * src, float * dst, int64_t n) {
+    if (g_neon_dq >= 0) return;
+    g_neon_dq = 0;
+    if (ty != GGML_TYPE_Q4_K) { fprintf(stderr, "NEON_DQ disabled (type %d)\n", (int) ty); return; }
+    std::vector<float> ref(n);
+    ggml_get_type_traits(ty)->to_float(src, ref.data(), n);
+    dq4K_neon(src, dst, n);
+    if (memcmp(ref.data(), dst, (size_t) n * 4) == 0) { g_neon_dq = 1; fprintf(stderr, "NEON_DQ validated bit-exact\n"); }
+    else fprintf(stderr, "NEON_DQ MISMATCH -> library fallback\n");
+}
+
+struct QM { const char * name; int64_t out, in; std::vector<float> * y; };
+// k quant matvecs sharing one input x in a SINGLE graph: one threadpool dispatch and
+// one ctx_reset instead of k. Per-row math is identical to sequential qmatvec calls.
+static bool qmatvec_multi(Model & m, const QM * ops, int k, const float * x) {
+    size_t sz[8]; int id[8]; enum ggml_type tyv[8];
+    if (k < 1 || k > 8) return false;
+    size_t tot = 0;
+    for (int i = 0; i < k; ++i) {
+        id[i] = gguf_find_tensor(m.g, ops[i].name);
+        if (id[i] < 0) { fprintf(stderr, "NO_TENSOR %s\n", ops[i].name); return false; }
+        const int64_t * ne = gguf_get_tensor_ne(m.g, id[i]);
+        tyv[i] = gguf_get_tensor_type(m.g, id[i]);
+        size_t nb = ggml_row_size(tyv[i], ne[0]);
+        for (int j = 1; j < GGML_MAX_DIMS && ne[j] > 0; ++j) nb *= (size_t) ne[j];
+        if (ne[0] != ops[i].in || ne[1] != ops[i].out) { fprintf(stderr, "SHAPE %s\n", ops[i].name); return false; }
+        sz[i] = nb; tot += nb;
+    }
+    if (g_stage4.size() < tot) g_stage4.resize(tot);
+    ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(x, ops[0].in), ops[0].in, 1);
+    ggml_tensor * rs[8];
+    size_t off = 0;
+    for (int i = 0; i < k; ++i) {
+        if (!m.rd(g_stage4.data() + off, sz[i], (off_t)(m.data_off + gguf_get_tensor_offset(m.g, id[i])))) { fprintf(stderr, "RD_FAIL %s\n", ops[i].name); return false; }
+        ggml_tensor * w = ggml_new_tensor(g_ctx, tyv[i], 2, (int64_t[]){ops[i].in, ops[i].out});
+        w->data = (void *)(g_stage4.data() + off);
+        off += sz[i];
+        rs[i] = ggml_mul_mat(g_ctx, w, xx);
+    }
+    ggml_cgraph * gf = ggml_new_graph(g_ctx);
+    for (int i = 0; i < k; ++i) ggml_build_forward_expand(gf, rs[i]);
+    ensure_backend();
+    if (!g_backend || ggml_backend_graph_compute(g_backend, gf) != GGML_STATUS_SUCCESS) { fprintf(stderr, "MULTI_COMPUTE_FAIL k=%d\n", k); return false; }
+    for (int i = 0; i < k; ++i) {
+        ops[i].y->resize((size_t) ops[i].out);
+        memcpy(ops[i].y->data(), rs[i]->data, (size_t) ops[i].out * 4);
+    }
     ctx_reset();
     return true;
 }
@@ -197,6 +298,50 @@ int main(int argc, char ** argv) {
     m.g = gguf_init_from_file(argv[1], gp);
     if (!m.g) { fprintf(stderr, "GGUF_FAIL\n"); return 1; }
     m.data_off = gguf_get_data_offset(m.g);
+    // bounded prefetch setup (Q3N_PREFETCH=1): mmap file for madvise + per-layer ranges
+    g_prefetch = getenv("Q3N_PREFETCH") != nullptr;
+    if (g_prefetch) {
+        struct stat fst;
+        if (fstat(m.fd, &fst) == 0 && fst.st_size > 0) {
+            g_map = (char *) mmap(nullptr, (size_t) fst.st_size, PROT_READ, MAP_PRIVATE, m.fd, 0);
+            if (g_map == MAP_FAILED) { g_map = nullptr; g_prefetch = false; fprintf(stderr, "PREFETCH_DISABLED\n"); }
+        } else { g_prefetch = false; fprintf(stderr, "PREFETCH_DISABLED\n"); }
+    }
+    if (g_prefetch) {
+        static const char * stat_names[] = {
+            "attn_norm.weight", "attn_qkv.weight", "attn_gate.weight", "ssm_ba.weight",
+            "ssm_conv1d.weight", "ssm_dt.bias", "ssm_a", "ssm_norm.weight", "ssm_out.weight",
+            "attn_q.weight", "attn_k.weight", "attn_v.weight", "attn_output.weight",
+            "attn_q_norm.weight", "attn_k_norm.weight", "post_attention_norm.weight",
+            "ffn_gate_inp.weight", "ffn_gate_shexp.weight", "ffn_up_shexp.weight",
+            "ffn_down_shexp.weight", "ffn_gate_inp_shexp.weight", nullptr };
+        g_layer_range.assign(m.n_layer, {0, 0});
+        for (int l = 0; l < m.n_layer; ++l) {
+            size_t lo = (size_t) -1, hi = 0;
+            char tn[160];
+            for (int s = 0; stat_names[s]; ++s) {
+                snprintf(tn, sizeof tn, "blk.%d.%s", l, stat_names[s]);
+                int id = gguf_find_tensor(m.g, tn);
+                if (id < 0) continue;
+                const int64_t * ne = gguf_get_tensor_ne(m.g, id);
+                size_t off = (size_t) gguf_get_tensor_offset(m.g, id);
+                size_t nb = ggml_row_size(gguf_get_tensor_type(m.g, id), ne[0]);
+                for (int j = 1; j < GGML_MAX_DIMS && ne[j] > 0; ++j) nb *= (size_t) ne[j];
+                lo = std::min(lo, off); hi = std::max(hi, off + nb);
+            }
+            if (l == m.n_layer - 1) {
+                int oid2 = gguf_find_tensor(m.g, "output.weight");
+                if (oid2 >= 0) {
+                    const int64_t * ne = gguf_get_tensor_ne(m.g, oid2);
+                    size_t off = (size_t) gguf_get_tensor_offset(m.g, oid2);
+                    size_t nb = ggml_row_size(gguf_get_tensor_type(m.g, oid2), ne[0]);
+                    for (int j = 1; j < GGML_MAX_DIMS && ne[j] > 0; ++j) nb *= (size_t) ne[j];
+                    lo = std::min(lo, off); hi = std::max(hi, off + nb);
+                }
+            }
+            if (lo != (size_t) -1) g_layer_range[l] = {lo, hi - lo};
+        }
+    }
     auto gi = [&](const char * k) -> int64_t {
         int i = gguf_find_key(m.g, k);
         if (i < 0) return 0;
@@ -292,8 +437,17 @@ int main(int argc, char ** argv) {
     auto forward = [&](int tok, int pos) -> bool {
         rec_slot = 0; attn_slot = 0;
         emb_row(tok, hidden.data());
+        (void) 0;
         if (getenv("Q3N_TRACE0") && pos == 0) fwrite(hidden.data(), 4, E, fopen("/tmp/ad_emb0.f32", "wb"));
         for (int l = 0; l < m.n_layer; ++l) {
+            if (g_prefetch && l + 1 < m.n_layer) {
+                size_t lo = g_layer_range[l + 1].first, len = g_layer_range[l + 1].second;
+                if (len) {
+                    size_t a = (m.data_off + lo) & ~((size_t) 4095);
+                    size_t e2 = ((m.data_off + lo + len) + 4095) & ~((size_t) 4095);
+                    if (e2 > a && e2 <= (size_t) -1) madvise(g_map + a, e2 - a, MADV_WILLNEED);
+                }
+            }
             if (getenv("Q3N_TRACE")) fprintf(stderr, "L%d %s\n", l, is_rec[l] ? "rec" : "attn");
             char nm[128];
             auto LD = [&](const char * suffix, std::vector<float> & dst, bool outin = true) {
@@ -313,11 +467,14 @@ int main(int argc, char ** argv) {
                 if (!LD("ssm_dt.bias", dtb, false)) return false;
                 if (!LD("ssm_a", sa, false)) return false;
                 if (!LD("ssm_norm.weight", ssnorm, false)) return false;
-                // projections (quant-native)
-                snprintf(nm, sizeof nm, "blk.%d.attn_qkv.weight", l);
-                if (!qmatvec(m, nm, cd, E, normed.data(), tmp1)) return false;   // qkv[c]
-                snprintf(nm, sizeof nm, "blk.%d.attn_gate.weight", l);
-                if (!qmatvec(m, nm, vd, E, normed.data(), tmp2)) return false;  // z
+                // projections (quant-native, one graph)
+                {
+                    char nmq[128], nmg[128];
+                    snprintf(nmq, sizeof nmq, "blk.%d.attn_qkv.weight", l);
+                    snprintf(nmg, sizeof nmg, "blk.%d.attn_gate.weight", l);
+                    QM ops[2] = { {nmq, cd, E, &tmp1}, {nmg, vd, E, &tmp2} };
+                    if (!qmatvec_multi(m, ops, 2, normed.data())) return false;   // qkv[c], z
+                }
                 std::vector<float> & z = tmp2;
                 if (getenv("Q3N_TRACE")) fprintf(stderr, "  L%d proj done\n", l);
                 if (!matvec(ba.data(), 2 * m.s_dtr, E, normed.data(), qf)) return false;
@@ -423,12 +580,14 @@ int main(int argc, char ** argv) {
                 std::vector<float> kn = wbuf;
                 const int NH = m.n_head, NKV = m.n_head_kv, G = NH / NKV;
                 std::vector<float> qfull, kf2, vf2;
-                snprintf(nm, sizeof nm, "blk.%d.attn_q.weight", l);
-                if (!qmatvec(m, nm, NH * 2 * HD, E, normed.data(), qfull)) return false;
-                snprintf(nm, sizeof nm, "blk.%d.attn_k.weight", l);
-                if (!qmatvec(m, nm, NKV * HD, E, normed.data(), kf2)) return false;
-                snprintf(nm, sizeof nm, "blk.%d.attn_v.weight", l);
-                if (!qmatvec(m, nm, NKV * HD, E, normed.data(), vf2)) return false;
+                {
+                    char nm1[128], nm2[128], nm3[128];
+                    snprintf(nm1, sizeof nm1, "blk.%d.attn_q.weight", l);
+                    snprintf(nm2, sizeof nm2, "blk.%d.attn_k.weight", l);
+                    snprintf(nm3, sizeof nm3, "blk.%d.attn_v.weight", l);
+                    QM ops[3] = { {nm1, NH * 2 * HD, E, &qfull}, {nm2, NKV * HD, E, &kf2}, {nm3, NKV * HD, E, &vf2} };
+                    if (!qmatvec_multi(m, ops, 3, normed.data())) return false;
+                }
                 float * ka = kv_k.data() + (size_t) attn_slot * NKV * HD * CTX;
                 float * va = kv_v.data() + (size_t) attn_slot * NKV * HD * CTX;
                 // per kv-head: norm k, partial rope on q/k, store k/v
@@ -487,10 +646,16 @@ int main(int argc, char ** argv) {
             prof_tick();
             if (!LD("post_attention_norm.weight", wbuf, false)) return false;
             rms(hidden.data(), wbuf.data(), normed.data(), E);
-            // MoE
-            std::vector<float> rl;
-            snprintf(nm, sizeof nm, "blk.%d.ffn_gate_inp.weight", l);
-            if (!qmatvec(m, nm, m.n_exp, E, normed.data(), rl)) return false;
+            // MoE: router + shared-expert gate/up in ONE graph (all consume normed)
+            std::vector<float> rl, sg1, su1;
+            {
+                char nm1[128], nm2[128], nm3[128];
+                snprintf(nm1, sizeof nm1, "blk.%d.ffn_gate_inp.weight", l);
+                snprintf(nm2, sizeof nm2, "blk.%d.ffn_gate_shexp.weight", l);
+                snprintf(nm3, sizeof nm3, "blk.%d.ffn_up_shexp.weight", l);
+                QM ops[3] = { {nm1, m.n_exp, E, &rl}, {nm2, m.n_ff_sh, E, &sg1}, {nm3, m.n_ff_sh, E, &su1} };
+                if (!qmatvec_multi(m, ops, 3, normed.data())) return false;
+            }
             std::vector<int> sel(m.n_used);
             { std::vector<int> idx(m.n_exp); for (int i = 0; i < m.n_exp; ++i) idx[i] = i;
               std::partial_sort(idx.begin(), idx.begin() + m.n_used, idx.end(), [&](int a, int b){ return rl[a] > rl[b]; });
@@ -539,7 +704,9 @@ int main(int argc, char ** argv) {
             prof_tick();
             // phase A: one graph computes all gate (fp32) and up (quant) projections
             ggml_tensor * wg_all = ggml_new_tensor(g_ctx, GGML_TYPE_F32, 2, (int64_t[]){E, FFE * m.n_used});
-            ggml_get_type_traits(tyg)->to_float(g_stage2.data(), (float *) wg_all->data, FFE * m.n_used * E);
+            if (g_neon_dq < 0) validate_neon_dq(tyg, g_stage2.data(), (float *) wg_all->data, FFE * m.n_used * E);
+            else if (g_neon_dq) dq4K_neon(g_stage2.data(), (float *) wg_all->data, FFE * m.n_used * E);
+            else ggml_get_type_traits(tyg)->to_float(g_stage2.data(), (float *) wg_all->data, FFE * m.n_used * E);
             ggml_tensor * wu_all = ggml_new_tensor(g_ctx, tyu, 2, (int64_t[]){E, FFE * m.n_used});
             wu_all->data = (void *) g_stage3.data();
             ggml_tensor * xx = ggml_reshape_2d(g_ctx, f32t(normed.data(), E), E, 1);
@@ -583,17 +750,13 @@ int main(int argc, char ** argv) {
                 for (int j = 0; j < E; ++j) moe[j] += mw[i] * d1v[j];
             }
             ctx_reset();
-            // shared expert (quant-native weights; fp32 gate scalar)
+            // shared expert (gate/up computed with router; down quant-native; fp32 gate scalar)
             if (!LD("ffn_gate_inp_shexp.weight", wbuf, false)) return false;
             {
-                std::vector<float> g1, u1, d1v;
-                snprintf(nm, sizeof nm, "blk.%d.ffn_gate_shexp.weight", l);
-                if (!qmatvec(m, nm, m.n_ff_sh, E, normed.data(), g1)) return false;
-                snprintf(nm, sizeof nm, "blk.%d.ffn_up_shexp.weight", l);
-                if (!qmatvec(m, nm, m.n_ff_sh, E, normed.data(), u1)) return false;
-                for (int j = 0; j < m.n_ff_sh; ++j) { float gv = g1[j]; g1[j] = gv / (1.0f + expf(-gv)) * u1[j]; }
+                std::vector<float> d1v;
+                for (int j = 0; j < m.n_ff_sh; ++j) { float gv = sg1[j]; sg1[j] = gv / (1.0f + expf(-gv)) * su1[j]; }
                 snprintf(nm, sizeof nm, "blk.%d.ffn_down_shexp.weight", l);
-                if (!qmatvec(m, nm, E, m.n_ff_sh, g1.data(), d1v)) return false;
+                if (!qmatvec(m, nm, E, m.n_ff_sh, sg1.data(), d1v)) return false;
                 double sg = 0;
                 for (int i2 = 0; i2 < E; ++i2) sg += (double) wbuf[i2] * normed[i2];
                 float sgf = sigmoid((float) sg);
@@ -628,6 +791,7 @@ int main(int argc, char ** argv) {
     };
 
     g_prof = getenv("Q3N_PROFILE") != nullptr;
+    ensure_backend();
     struct rusage ru0; getrusage(RUSAGE_SELF, &ru0);
     auto t0 = std::chrono::steady_clock::now();
     int gen = 0, fed = 0;
