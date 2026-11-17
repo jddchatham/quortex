@@ -153,10 +153,20 @@ int main(int argc, char ** argv) {
     std::printf("N_VOCAB=%d\n", n_vocab);
 
     // Decode the full prompt in one batch; logits at the final position.
-    llama_batch batch = llama_batch_get_one(prompt.data(), static_cast<int>(prompt.size()));
-    if (llama_decode(ctx, batch) != 0) {
-        std::fprintf(stderr, "DECODE_PROMPT_FAIL\n");
-        return 1;
+    if (const char * sw = std::getenv("PROBE_STEPWISE")) {
+        if (sw[0] == '1') {
+            for (size_t si = 0; si < prompt.size(); ++si) {
+                llama_token one = prompt[si];
+                llama_batch b1 = llama_batch_get_one(&one, 1);
+                if (llama_decode(ctx, b1) != 0) { std::fprintf(stderr, "DECODE_SW_%zu_FAIL\n", si); return 1; }
+            }
+        } else {
+            llama_batch batch = llama_batch_get_one(prompt.data(), static_cast<int>(prompt.size()));
+            if (llama_decode(ctx, batch) != 0) { std::fprintf(stderr, "DECODE_PROMPT_FAIL\n"); return 1; }
+        }
+    } else {
+        llama_batch batch = llama_batch_get_one(prompt.data(), static_cast<int>(prompt.size()));
+        if (llama_decode(ctx, batch) != 0) { std::fprintf(stderr, "DECODE_PROMPT_FAIL\n"); return 1; }
     }
     const float * logits = llama_get_logits_ith(ctx, -1);
     if (!logits) {
