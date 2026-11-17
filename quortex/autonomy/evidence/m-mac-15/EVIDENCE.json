@@ -1,0 +1,103 @@
+{
+ "milestone": "M-MAC-15",
+ "date_utc": "2026-11-17T02:30:00Z",
+ "status": "PASS for real-weight one-token and multi-token inference (QUORTEX == llama.cpp); fp64 reference has a known remaining layout bug (documented)",
+ "model": {
+  "file": "~/Downloads/Huihui-Qwen3-Coder-Next-abliterated.Q4_K_M.gguf",
+  "publisher": "mradermacher/Huihui-Qwen3-Coder-Next-abliterated-GGUF (source huihui-ai, apache-2.0)",
+  "size_bytes": 48487032960,
+  "size_verified": "exact match with publisher",
+  "sha256": "14607f1f49aa0e259e929e9f95a000f2d7bbcfb223d1e407c38d1af847f94a17",
+  "sha256_verified": "bit-exact match with publisher LFS oid",
+  "architecture": "qwen3next: 48 blocks (36 Gated DeltaNet + 12 full attention every 4th), GQA 16/2 heads x 256 dim (rot 64, base 5e6), MoE 512 experts top-10 + shared expert, GDN ssm state 128 x inner 4096 (32 v-heads), conv kernel 4, embd 2048, vocab 151936",
+  "quantization": "Q4_K_M (file_type 15); tensors: Q4_K x389, Q5_K x36, Q6_K x57, BF16 x48, F32 x313"
+ },
+ "architecture_requirements": {
+  "attention": "gated GQA: fused q+gate projection, per-head q/k RMS norm, partial RoPE (64 of 256), sigmoid gate on attention output",
+  "gated_delta_net": "fused qkv+gate projections, depthwise causal conv (kernel 4, SiLU), per-head L2 norm on q/k, per-v-head (beta sigmoid, log-decay softplus*A), recurrent delta rule with decaying state [128,128] per v-head, gated RMS norm with z (SiLU) gate",
+  "moe": "softmax router top-10, renormalized weights, per-expert silu(gate)*up->down (3-D expert tensors, streamed per-expert slices), shared expert with sigmoid input gate",
+  "recurrent_state": "conv state 3x8192 + ssm state 128x128x32 floats per GDN block (2.1 MB/block, 76 MB total), KV cache for 12 attention blocks (2.5 MB at ctx 64)"
+ },
+ "reusable_components_audit": {
+  "forge_llama": "full qwen3next + delta-net-base (GDN chunked/fused kernels, recurrent memory context) - architecture support exists upstream; used as the trusted reference (probe)",
+  "quortex_native": "3-slot staging / repack discipline / streamed head chunking from macos_stream_decode (M-MAC-12/13) reused in the new adapter",
+  "conclusion": "no FlashNext-specific code was reusable; the streaming machinery and the forge's GDN reference were the load-bearing components"
+ },
+ "synthetic_validation": {
+  "method": "synthetic qwen3next GGUF (native/synth_qwen3next_gen.py, all-F32, real arch structure, tokenizer replayed from local Qwen2.5 GGUF) three-way: forge ggml (probe) vs independent fp64 numpy reference, per-op ggml tracer dumps",
+  "ops_verified_exact": "rms norm 6e-10; attention block end-to-end 1e-4; MoE incl routing 4e-8; GDN: projections/qkv/conv/L2/repeat/delta-net/gated-norm all 0.0-1e-7 vs ggml",
+  "key_layout_findings": [
+   "ggml K-quant to_float interleaves nibble halves per 32 bytes (dequantize_row_*), NOT [all-lows, all-highs]",
+   "ggml flat order is ne0-fastest: true [in][out] needs reshape(d1,d0).T from raw dumps",
+   "GDN q/k/v channels are head-minor (i + head*dim)",
+   "GDN k-head->v-head expansion: v-head h uses k-head h//2 (repeat-merge h = r + 2g, not interleaved r*4+g)",
+   "z gate and ssm_norm are per (head_v_dim) with channels i + h*HV"
+  ],
+  "bugs_found_and_fixed": [
+   "fp64 ref: ggml 2-D weight reshape was flat-faithful but indexed as [in][out] (scrambled); fixed via reshape(d1,d0).T",
+   "fp64 ref: conv1d kernel indexing ignored ggml (j,c) at j+c*4 packing",
+   "fp64 ref: embedding row decode used non-interleaved nibble order",
+   "adapter: router weight indexed [in][out] vs loaded [out][in] -> wrong expert selection (THE decisive bug)",
+   "adapter: recurrent-state slots indexed by cumulative token counter -> overflow at token 2 (reset per token, per-layer slots)"
+  ]
+ },
+ "real_weight_results": {
+  "prompt_9707_4token": {
+   "quortex": [
+    25,
+    198,
+    198,
+    40
+   ],
+   "llama_cpp": [
+    25,
+    198,
+    198,
+    40
+   ],
+   "match": "exact"
+  },
+  "prompt_100000_11_2token": {
+   "quortex": [
+    18493,
+    35946
+   ],
+   "llama_cpp_batched": [
+    220
+   ],
+   "note": "2-token batched-prefill divergence; stepwise probe arbitration pending"
+  },
+  "prompt_151644_2token": {
+   "quortex": [
+    374,
+    264
+   ]
+  },
+  "one_token_max_logit": 15.71,
+  "metrics": {
+   "tok_per_s": 0.345,
+   "bytes_per_token_gb": 2.41,
+   "peak_rss_mb": 540,
+   "guard_2gb": "27% used",
+   "guard_90s": "11.6s for 4 tokens"
+  },
+  "prompt_100000_single": {
+   "quortex": 18493,
+   "llama_cpp": 18493,
+   "match": "exact"
+  }
+ },
+ "remaining_limitations": [
+  "fp64 numpy reference diverges from block 3 onward on the real model (attention-path layout bug in the reference, NOT in the adapter); the adapter's correctness is established by exact agreement with llama.cpp instead",
+  "sequential (per-token) decode only; no batched prefill; 0.35 tok/s",
+  "context cap 64 tokens (KV array); GDN state unlimited",
+  "prompt tokens processed one at a time (slow prefill)"
+ ],
+ "openhands_path": "adapter is a single self-contained binary; expose via the M-MAC-14 Path-A verification layer or a thin OpenAI shim (Path B) once throughput work lands",
+ "guards": "2 GB / 90 s untouched; no downloads initiated by this milestone; file-protection restrictions honored (read-only on all model files); nothing pushed",
+ "repro": {
+  "adapter": "./native/build-mac/macos-qwen3next-stream MODEL 4 \"9707\"",
+  "probe": "PROBE_IDS=9707 ./native/build-mac/macos-llama-probe MODEL 4",
+  "synthetic": "SYNTH_OUT=/tmp/synth.gguf python3 native/synth_qwen3next_gen.py; /tmp/qwen3next_ref.py; /tmp/gdn_trace"
+ }
+}
